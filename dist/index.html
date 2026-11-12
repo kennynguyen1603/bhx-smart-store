@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="BHX Smart Store MVP – mô phỏng ứng dụng nhiệm vụ nhân viên và kiosk tìm kiếm sản phẩm trong cửa hàng."
+    />
+    <meta name="theme-color" content="#08783f" />
+    <title>BHX Smart Store MVP</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
+
+    <div id="app">
+      <header class="app-bar" id="app-bar">
+        <button class="brand" type="button" data-action="go-home" aria-label="Về trang chọn trải nghiệm">
+          <span class="brand-mark" aria-hidden="true">BHX</span>
+          <span class="brand-copy">
+            <strong>Smart Store</strong>
+            <small>MVP demo</small>
+          </span>
+        </button>
+
+        <div class="app-bar-actions">
+          <div class="sync-state" aria-label="Trạng thái đồng bộ">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <span>Store Data</span>
+            <strong>Đang đồng bộ</strong>
+          </div>
+          <button class="icon-button" type="button" data-action="open-help" aria-label="Hướng dẫn sử dụng">
+            <svg aria-hidden="true"><use href="#icon-help"></use></svg>
+          </button>
+        </div>
+      </header>
+
+      <main id="main-content">
+        <section class="screen mode-screen is-active" id="mode-screen" aria-labelledby="mode-title">
+          <div class="mode-backdrop" aria-hidden="true">
+            <span class="orb orb-one"></span>
+            <span class="orb orb-two"></span>
+          </div>
+
+          <div class="mode-hero">
+            <div class="eyebrow"><span></span> BHX SMART IN-STORE</div>
+            <h1 id="mode-title">Một cửa hàng.<br /><em>Hai trải nghiệm thông minh.</em></h1>
+            <p>
+              Chọn vai trò để khám phá luồng vận hành kệ hàng dành cho nhân viên
+              hoặc trải nghiệm tìm sản phẩm tự phục vụ dành cho khách hàng.
+            </p>
+          </div>
+
+          <div class="experience-grid" aria-label="Chọn trải nghiệm demo">
+            <button class="experience-card staff-card" type="button" data-action="open-staff">
+              <span class="experience-number">01</span>
+              <span class="experience-icon">
+                <svg aria-hidden="true"><use href="#icon-tasks"></use></svg>
+              </span>
+              <span class="experience-content">
+                <span class="experience-label">Dành cho nhân viên</span>
+                <strong>Staff Task App</strong>
+                <span>Nhận nhiệm vụ ưu tiên, quét ESL, cập nhật tồn kệ và xử lý FEFO.</span>
+              </span>
+              <span class="experience-cta">Mở ứng dụng <svg aria-hidden="true"><use href="#icon-arrow"></use></svg></span>
+            </button>
+
+            <button class="experience-card kiosk-card" type="button" data-action="open-kiosk">
+              <span class="experience-number">02</span>
+              <span class="experience-icon">
+                <svg aria-hidden="true"><use href="#icon-map"></use></svg>
+              </span>
+              <span class="experience-content">
+                <span class="experience-label">Dành cho khách hàng</span>
+                <strong>In-store Kiosk</strong>
+                <span>Quét mã hoặc tìm kiếm để xem vị trí và đường đi đến sản phẩm.</span>
+              </span>
+              <span class="experience-cta">Bắt đầu tìm hàng <svg aria-hidden="true"><use href="#icon-arrow"></use></svg></span>
+            </button>
+          </div>
+
+          <div class="data-story" aria-label="Luồng dữ liệu hệ thống">
+            <span><small>NGUỒN DỮ LIỆU</small> ERP · WMS · POS</span>
+            <svg aria-hidden="true"><use href="#icon-arrow"></use></svg>
+            <span><small>UNIFIED LAYER</small> Realtime · FEFO · On-shelf</span>
+            <svg aria-hidden="true"><use href="#icon-arrow"></use></svg>
+            <span><small>TRẢI NGHIỆM</small> ESL · Kiosk · Staff App</span>
+          </div>
+        </section>
+
+        <section class="screen staff-screen" id="staff-screen" aria-labelledby="staff-title">
+          <aside class="staff-sidebar" aria-label="Điều hướng ứng dụng nhân viên">
+            <div class="store-chip">
+              <span class="store-avatar">NT</span>
+              <span><small>Đang làm việc tại</small><strong>BHX Nguyễn Trãi</strong></span>
+              <svg aria-hidden="true"><use href="#icon-chevron"></use></svg>
+            </div>
+
+            <nav class="staff-nav">
+              <button class="nav-item is-active" type="button" data-staff-tab="overview">
+                <svg aria-hidden="true"><use href="#icon-grid"></use></svg>
+                <span>Tổng quan</span>
+              </button>
+              <button class="nav-item" type="button" data-staff-tab="tasks">
+                <svg aria-hidden="true"><use href="#icon-tasks"></use></svg>
+                <span>Nhiệm vụ</span>
+                <b id="nav-task-count">3</b>
+              </button>
+              <button class="nav-item" type="button" data-action="open-scan">
+                <svg aria-hidden="true"><use href="#icon-scan"></use></svg>
+                <span>Quét ESL</span>
+              </button>
+              <button class="nav-item" type="button" data-staff-tab="activity">
+                <svg aria-hidden="true"><use href="#icon-clock"></use></svg>
+                <span>Lịch sử</span>
+              </button>
+            </nav>
+
+            <div class="staff-profile">
+              <span class="avatar">AN</span>
+              <span><strong>Nguyễn Hoàng An</strong><small>Nhân viên ca sáng</small></span>
+              <button class="more-button" type="button" aria-label="Thêm tùy chọn">•••</button>
+            </div>
+          </aside>
+
+          <div class="staff-workspace">
+            <header class="workspace-header">
+              <div>
+                <button class="back-link" type="button" data-action="go-home">
+                  <svg aria-hidden="true"><use href="#icon-back"></use></svg> Đổi trải nghiệm
+                </button>
+                <p class="date-label" id="today-label">Thứ Sáu, 13 tháng 11</p>
+                <h1 id="staff-title">Chào buổi sáng, An 👋</h1>
+                <p>Hôm nay có <strong id="priority-copy">2 nhiệm vụ ưu tiên</strong> cần bạn xử lý.</p>
+              </div>
+              <div class="workspace-actions">
+                <button class="secondary-button" type="button" data-action="simulate-sale">
+                  <svg aria-hidden="true"><use href="#icon-pos"></use></svg>
+                  Mô phỏng bán hàng
+                </button>
+                <button class="notification-button" type="button" data-staff-tab="tasks" aria-label="Xem thông báo">
+                  <svg aria-hidden="true"><use href="#icon-bell"></use></svg><span id="notification-count">2</span>
+                </button>
+              </div>
+            </header>
+
+            <div class="staff-tab-panel is-active" data-panel="overview">
+              <div class="metric-grid" id="metric-grid"></div>
+
+              <div class="workspace-grid">
+                <section class="panel task-panel" aria-labelledby="priority-heading">
+                  <div class="panel-heading">
+                    <div>
+                      <span class="section-kicker">CẦN XỬ LÝ</span>
+                      <h2 id="priority-heading">Nhiệm vụ ưu tiên</h2>
+                    </div>
+                    <button class="text-button" type="button" data-staff-tab="tasks">Xem tất cả <svg aria-hidden="true"><use href="#icon-arrow"></use></svg></button>
+                  </div>
+                  <div class="task-list" id="priority-task-list"></div>
+                </section>
+
+                <aside class="panel shelf-status-panel" aria-labelledby="shelf-status-title">
+                  <div class="panel-heading compact">
+                    <div>
+                      <span class="section-kicker">LIVE DATA</span>
+                      <h2 id="shelf-status-title">Tình trạng kệ</h2>
+                    </div>
+                    <span class="live-pill"><i></i> Realtime</span>
+                  </div>
+                  <div id="shelf-status-list" class="shelf-status-list"></div>
+                  <button class="outline-button full-width" type="button" data-action="simulate-sale">
+                    <svg aria-hidden="true"><use href="#icon-pos"></use></svg>
+                    POS ghi nhận bán 2 sản phẩm
+                  </button>
+                </aside>
+              </div>
+
+              <section class="system-strip" aria-label="Trạng thái luồng dữ liệu">
+                <div class="system-icon"><svg aria-hidden="true"><use href="#icon-layers"></use></svg></div>
+                <div><span>UNIFIED STORE DATA LAYER</span><strong>3 nguồn dữ liệu đang hoạt động</strong></div>
+                <div class="source-pills"><span>ERP <i></i></span><span>DC WMS <i></i></span><span>POS <i></i></span></div>
+                <small>Cập nhật 8 giây trước</small>
+              </section>
+            </div>
+
+            <div class="staff-tab-panel" data-panel="tasks">
+              <div class="content-title-row">
+                <div><span class="section-kicker">CÔNG VIỆC TRONG CA</span><h2>Tất cả nhiệm vụ</h2><p>Ưu tiên theo mức độ ảnh hưởng đến tình trạng kệ.</p></div>
+                <button class="primary-button" type="button" data-action="open-scan"><svg aria-hidden="true"><use href="#icon-scan"></use></svg> Quét ESL</button>
+              </div>
+              <div class="task-filter" role="tablist" aria-label="Lọc nhiệm vụ">
+                <button class="is-active" type="button" data-task-filter="all">Tất cả</button>
+                <button type="button" data-task-filter="restock">Bổ sung hàng</button>
+                <button type="button" data-task-filter="fefo">FEFO</button>
+                <button type="button" data-task-filter="completed">Đã hoàn thành</button>
+              </div>
+              <div class="all-task-list" id="all-task-list"></div>
+            </div>
+
+            <div class="staff-tab-panel" data-panel="activity">
+              <div class="content-title-row">
+                <div><span class="section-kicker">NHẬT KÝ THAO TÁC</span><h2>Lịch sử hoạt động</h2><p>Mọi điều chỉnh đều được ghi nhận để dễ dàng đối soát.</p></div>
+              </div>
+              <div class="activity-list" id="activity-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen kiosk-screen" id="kiosk-screen" aria-labelledby="kiosk-title">
+          <header class="kiosk-header">
+            <button class="kiosk-brand" type="button" data-action="reset-kiosk" aria-label="Về trang chủ kiosk">
+              <span>BHX</span><strong>Bách hóa thông minh</strong>
+            </button>
+            <div class="kiosk-location">
+              <svg aria-hidden="true"><use href="#icon-pin"></use></svg>
+              <span><small>Bạn đang ở</small><strong>BHX Nguyễn Trãi, Q.5</strong></span>
+            </div>
+            <div class="kiosk-header-actions">
+              <button type="button" data-action="toggle-language"><strong>VI</strong> / EN</button>
+              <button type="button" data-action="go-home"><svg aria-hidden="true"><use href="#icon-exit"></use></svg> Thoát demo</button>
+            </div>
+          </header>
+
+          <div class="kiosk-content" id="kiosk-home-view">
+            <div class="kiosk-intro">
+              <span class="kiosk-eyebrow"><i></i> TÌM HÀNG NHANH HƠN</span>
+              <h1 id="kiosk-title">Bạn đang tìm<br /><em>sản phẩm nào?</em></h1>
+              <p>Quét mã trên sản phẩm hoặc nhập tên để được chỉ đường đến đúng kệ hàng.</p>
+            </div>
+
+            <div class="kiosk-search-area">
+              <form class="kiosk-search" id="kiosk-search-form" role="search">
+                <svg aria-hidden="true"><use href="#icon-search"></use></svg>
+                <label class="sr-only" for="product-search">Tìm kiếm sản phẩm</label>
+                <input id="product-search" type="search" autocomplete="off" placeholder="Tìm sữa, trái cây, mì gói..." />
+                <button type="submit">Tìm kiếm</button>
+              </form>
+              <span class="search-divider">HOẶC</span>
+              <button class="scan-product-button" type="button" data-action="scan-product">
+                <span><svg aria-hidden="true"><use href="#icon-barcode"></use></svg></span>
+                <strong>Quét mã sản phẩm</strong>
+                <small>Đưa barcode hoặc QR vào máy quét</small>
+              </button>
+            </div>
+
+            <div class="category-section">
+              <div class="category-heading"><h2>Khám phá theo danh mục</h2><small>Chạm để xem sản phẩm</small></div>
+              <div class="category-grid" id="category-grid"></div>
+            </div>
+
+            <div class="kiosk-tip">
+              <svg aria-hidden="true"><use href="#icon-spark"></use></svg>
+              <span><strong>Mẹo nhỏ</strong> Bạn có thể quét mã của một sản phẩm tương tự để tìm đúng khu vực.</span>
+            </div>
+          </div>
+
+          <div class="kiosk-content kiosk-results-view" id="kiosk-results-view" hidden>
+            <button class="kiosk-back-button" type="button" data-action="kiosk-back"><svg aria-hidden="true"><use href="#icon-back"></use></svg> Quay lại</button>
+            <div class="results-header"><span class="kiosk-eyebrow"><i></i> KẾT QUẢ TÌM KIẾM</span><h1 id="results-title">Sản phẩm phù hợp</h1><p id="results-copy"></p></div>
+            <div class="product-grid" id="product-grid"></div>
+          </div>
+
+          <div class="kiosk-session"><span>Phiên sẽ tự đặt lại sau</span><strong id="session-timer">02:00</strong></div>
+        </section>
+      </main>
+
+      <div class="modal-root" id="modal-root" aria-live="polite"></div>
+      <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+      <svg class="svg-sprite" aria-hidden="true">
+        <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+        <symbol id="icon-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6M9 12h10"/></symbol>
+        <symbol id="icon-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.7 9a2.5 2.5 0 1 1 3.9 2.1c-.9.6-1.6 1-1.6 2.4M12 17h.01"/></symbol>
+        <symbol id="icon-tasks" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h.01M11 8h5M8 12h.01M11 12h5M8 16h.01M11 16h5"/></symbol>
+        <symbol id="icon-map" viewBox="0 0 24 24"><path d="m3 6 5-3 8 3 5-3v15l-5 3-8-3-5 3V6Z"/><path d="M8 3v15M16 6v15"/></symbol>
+        <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+        <symbol id="icon-scan" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10"/></symbol>
+        <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+        <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 10 3 3 3-3"/></symbol>
+        <symbol id="icon-pos" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 12h2M14 12h2M8 16h2M14 16h2"/></symbol>
+        <symbol id="icon-bell" viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 8h18c0-1-3-1-3-8ZM10 21h4"/></symbol>
+        <symbol id="icon-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></symbol>
+        <symbol id="icon-pin" viewBox="0 0 24 24"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+        <symbol id="icon-exit" viewBox="0 0 24 24"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M14 8l4 4-4 4M8 12h10"/></symbol>
+        <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+        <symbol id="icon-barcode" viewBox="0 0 24 24"><path d="M4 5v14M7 5v14M11 5v14M14 5v14M16 5v14M20 5v14"/></symbol>
+        <symbol id="icon-spark" viewBox="0 0 24 24"><path d="m12 2 1.7 5.3L19 9l-5.3 1.7L12 16l-1.7-5.3L5 9l5.3-1.7L12 2ZM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></symbol>
+        <symbol id="icon-package" viewBox="0 0 24 24"><path d="m4 7 8-4 8 4v10l-8 4-8-4V7Z"/><path d="m4 7 8 4 8-4M12 11v10M8 5l8 4"/></symbol>
+        <symbol id="icon-alert" viewBox="0 0 24 24"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17h.01"/></symbol>
+        <symbol id="icon-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+        <symbol id="icon-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></symbol>
+        <symbol id="icon-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+        <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+        <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      </svg>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
