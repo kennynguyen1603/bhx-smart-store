@@ -15,6 +15,11 @@ python3 -m http.server 4173 --directory dist
 
 Mở `http://localhost:4173` trong trình duyệt.
 
+## GitHub Pages
+
+Repository có `index.html` tại thư mục gốc để chuyển tiếp tới bản build trong `dist/`.
+Trong **Settings → Pages**, chọn **Deploy from a branch**, nhánh `main` và thư mục `/(root)`.
+
 ## Dữ liệu demo
 
 Dữ liệu được lưu trong `localStorage` của trình duyệt. Chọn nút trợ giúp `?` ở màn hình đầu và bấm **Đặt lại dữ liệu demo** để trở về trạng thái ban đầu.

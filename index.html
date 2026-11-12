@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Đang mở BHX Smart Store MVP…</title>
+    <meta http-equiv="refresh" content="0; url=./dist/" />
+    <style>
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        color: #07522f;
+        background: #fbf8f1;
+        font: 600 16px/1.5 system-ui, sans-serif;
+      }
+
+      a {
+        color: #08783f;
+      }
+    </style>
+    <script>
+      const destination = new URL("./dist/", window.location.href);
+      destination.search = window.location.search;
+      destination.hash = window.location.hash;
+      window.location.replace(destination.href);
+    </script>
+  </head>
+  <body>
+    <p>Đang mở demo… <a href="./dist/">Bấm vào đây nếu trang không tự chuyển.</a></p>
+  </body>
+</html>
