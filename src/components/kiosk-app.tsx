@@ -11,7 +11,7 @@ type Bootstrap = { stores: { id: string; code: string; name: string; address: st
 type Product = { id: string; sku: string; barcode: string; name: string; category: string; priceVnd: number; emoji: string; availability: "AVAILABLE" | "LOW" | "OUT"; availabilityLabel: string; shelf: { id: string; code: string; label: string; zone?: string } };
 type Detail = { store: { code: string; name: string; address: string; mapWidth: number; mapHeight: number }; product: Omit<Product, "shelf"> & { unit: string; originalPriceVnd: number; shelf: { id: string; code: string; label: string; zone?: { id: string; name: string } }; traceability: { batchCode: string; origin: string; expiryDate: string; supplier: string; certificate: string | null; markdownPercent: number | null }[] }; map: { zones: { id: string; name: string; color: string; x: number; y: number; width: number; height: number }[]; shelves: { id: string; code: string; label: string; x: number; y: number; width: number; height: number }[]; start: { x: number; y: number }; destination: { x: number; y: number }; route: { x: number; y: number }[] } };
 
-const categoryEmoji: Record<string, string> = { "Rau củ & trái cây": "🥬", "Sữa & đồ lạnh": "🥛", "Mì & thực phẩm khô": "🍜", "Bánh & đồ ăn nhanh": "🥖", "Chăm sóc nhà cửa": "🧴" };
+const categoryEmoji: Record<string, string> = { "Rau củ & trái cây": "🥬", "Sữa & đồ lạnh": "🥛", "Mì & thực phẩm khô": "🍜", "Bánh & đồ ăn nhanh": "🥖", "Chăm sóc nhà cửa": "🧴", "Trứng & thực phẩm mát": "🥚", "Gia vị & nước chấm": "🫙" };
 
 export function KioskApp() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);

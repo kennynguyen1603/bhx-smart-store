@@ -33,6 +33,15 @@ test("mobile kiosk maps yogurt to its own shelf without horizontal overflow", as
   expect(layout).toEqual({ pageOverflow: 0, modalOverflow: 0 });
 });
 
+test("kiosk exposes the expanded catalog and finds Vietnamese text without accents", async ({ page }) => {
+  await page.goto("/kiosk");
+  await expect(page.locator(".category-grid button")).toHaveCount(7);
+  await page.getByPlaceholder(/Tìm sữa/i).fill("pho mai");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await expect(page.getByText("Phô mai Con Bò Cười hộp 8 miếng", { exact: true })).toBeVisible();
+  await expect(page.getByText("Kệ phô mai", { exact: false })).toBeVisible();
+});
+
 test("staff can sign in and see assigned tasks", async ({ page }) => {
   await page.goto("/login?callbackUrl=/staff");
   await page.getByLabel("Email").fill("staff@demo.bhx");
