@@ -1,0 +1,450 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STAFF
+  MANAGER
+  ADMIN
+}
+
+enum TaskType {
+  RESTOCK
+  FEFO
+  QUARANTINE
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  NORMAL
+  MEDIUM
+  HIGH
+}
+
+enum EslStatus {
+  ONLINE
+  OFFLINE
+  ERROR
+}
+
+enum LotStatus {
+  AVAILABLE
+  MARKED_DOWN
+  QUARANTINED
+  SOLD_OUT
+}
+
+enum IntegrationType {
+  POS
+  WMS
+  SUPPLIER
+  ESL
+  FEFO
+}
+
+enum IntegrationStatus {
+  RECEIVED
+  PROCESSED
+  DUPLICATE
+  FAILED
+}
+
+enum MovementType {
+  SALE
+  RESTOCK
+  RECONCILIATION
+  WMS_SYNC
+  QUARANTINE
+}
+
+enum NotificationType {
+  TASK_CREATED
+  TASK_BLOCKED
+  FEFO_DUE
+  SYSTEM
+}
+
+model User {
+  id                String             @id @default(cuid())
+  email             String             @unique
+  name              String
+  passwordHash      String
+  role              Role
+  active            Boolean            @default(true)
+  userStores        UserStore[]
+  assignedTasks     Task[]             @relation("TaskAssignee")
+  taskEvents        TaskEvent[]
+  stockMovements    StockMovement[]
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+  auditLogs         AuditLog[]
+  mutationReceipts  MutationReceipt[]
+  createdAt         DateTime           @default(now()) @db.Timestamptz
+  updatedAt         DateTime           @updatedAt @db.Timestamptz
+}
+
+model UserStore {
+  id        String   @id @default(cuid())
+  userId    String
+  storeId   String
+  isDefault Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+  @@index([storeId])
+}
+
+model Store {
+  id                String             @id @default(cuid())
+  code              String             @unique
+  name              String
+  address           String
+  timeZone          String             @default("Asia/Ho_Chi_Minh")
+  mapWidth          Int                @default(12)
+  mapHeight         Int                @default(8)
+  active            Boolean            @default(true)
+  userStores        UserStore[]
+  zones             Zone[]
+  shelves           Shelf[]
+  kiosks            KioskDevice[]
+  lots              Lot[]
+  esls              ESL[]
+  inventories       Inventory[]
+  tasks             Task[]
+  saleEvents        SaleEvent[]
+  integrationEvents IntegrationEvent[]
+  fefoRules         FefoRule[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  createdAt         DateTime           @default(now()) @db.Timestamptz
+  updatedAt         DateTime           @updatedAt @db.Timestamptz
+}
+
+model Zone {
+  id      String  @id @default(cuid())
+  storeId String
+  name    String
+  color   String  @default("#dff3e7")
+  x       Int
+  y       Int
+  width   Int
+  height  Int
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shelves Shelf[]
+
+  @@unique([storeId, name])
+}
+
+model Shelf {
+  id          String      @id @default(cuid())
+  storeId     String
+  zoneId      String?
+  code        String
+  label       String
+  x           Int
+  y           Int
+  width       Int         @default(1)
+  height      Int         @default(1)
+  store       Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  zone        Zone?       @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  esls        ESL[]
+  inventories Inventory[]
+  tasks       Task[]
+  saleEvents  SaleEvent[]
+
+  @@unique([storeId, code])
+  @@index([zoneId])
+}
+
+model KioskDevice {
+  id      String  @id @default(cuid())
+  storeId String
+  code    String  @unique
+  name    String
+  x       Int
+  y       Int
+  active  Boolean @default(true)
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+}
+
+model Supplier {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String
+  country     String
+  certificate String?
+  active      Boolean @default(true)
+  lots        Lot[]
+}
+
+model Product {
+  id          String      @id @default(cuid())
+  sku         String      @unique
+  barcode     String      @unique
+  name        String
+  searchText  String
+  category    String
+  unit        String
+  basePriceVnd Int
+  emoji       String      @default("📦")
+  active      Boolean     @default(true)
+  lots        Lot[]
+  esls        ESL[]
+  inventories Inventory[]
+  tasks       Task[]
+  saleEvents  SaleEvent[]
+  createdAt   DateTime    @default(now()) @db.Timestamptz
+  updatedAt   DateTime    @updatedAt @db.Timestamptz
+}
+
+model Lot {
+  id               String      @id @default(cuid())
+  storeId          String
+  productId        String
+  supplierId       String
+  batchCode        String
+  origin           String
+  receivedAt       DateTime    @db.Timestamptz
+  expiryDate       DateTime    @db.Date
+  quantity         Int
+  status           LotStatus   @default(AVAILABLE)
+  markdownPercent  Int?
+  markdownPriceVnd Int?
+  store            Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product          Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplier         Supplier    @relation(fields: [supplierId], references: [id])
+  tasks            Task[]
+  markdowns        Markdown[]
+  createdAt        DateTime    @default(now()) @db.Timestamptz
+  updatedAt        DateTime    @updatedAt @db.Timestamptz
+
+  @@unique([storeId, productId, batchCode])
+  @@index([storeId, expiryDate])
+}
+
+model ESL {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  storeId   String
+  shelfId   String
+  productId String
+  status    EslStatus @default(ONLINE)
+  ledOn     Boolean   @default(false)
+  lastSeenAt DateTime @default(now()) @db.Timestamptz
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shelf     Shelf     @relation(fields: [shelfId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([shelfId, productId])
+  @@index([storeId])
+}
+
+model Inventory {
+  id           String   @id @default(cuid())
+  storeId      String
+  shelfId      String
+  productId    String
+  onShelf      Int
+  backroom     Int
+  capacity     Int
+  lowThreshold Int
+  version      Int      @default(1)
+  store        Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shelf        Shelf    @relation(fields: [shelfId], references: [id], onDelete: Cascade)
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  movements    StockMovement[]
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  @@unique([storeId, shelfId, productId])
+  @@index([storeId, productId])
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  storeId     String
+  productId   String
+  shelfId     String
+  lotId       String?
+  assigneeId  String?
+  type        TaskType
+  status      TaskStatus   @default(OPEN)
+  priority    TaskPriority @default(NORMAL)
+  title       String
+  note        String?
+  dueAt       DateTime?    @db.Timestamptz
+  startedAt   DateTime?    @db.Timestamptz
+  completedAt DateTime?    @db.Timestamptz
+  store       Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  shelf       Shelf        @relation(fields: [shelfId], references: [id], onDelete: Cascade)
+  lot         Lot?         @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  events      TaskEvent[]
+  movements   StockMovement[]
+  notifications Notification[]
+  createdAt   DateTime     @default(now()) @db.Timestamptz
+  updatedAt   DateTime     @updatedAt @db.Timestamptz
+
+  @@index([storeId, status, priority])
+  @@index([productId, shelfId, type, status])
+}
+
+model TaskEvent {
+  id        String   @id @default(cuid())
+  taskId    String
+  actorId   String?
+  type      String
+  note      String?
+  metadata  Json?
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@index([taskId, createdAt])
+}
+
+model SaleEvent {
+  id              String   @id @default(cuid())
+  externalEventId String   @unique
+  storeId         String
+  shelfId         String
+  productId       String
+  quantity        Int
+  priceVnd        Int
+  occurredAt      DateTime @db.Timestamptz
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shelf           Shelf    @relation(fields: [shelfId], references: [id], onDelete: Cascade)
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now()) @db.Timestamptz
+
+  @@index([storeId, occurredAt])
+}
+
+model StockMovement {
+  id               String       @id @default(cuid())
+  inventoryId      String
+  taskId           String?
+  actorId          String?
+  clientMutationId String?      @unique
+  type             MovementType
+  deltaShelf       Int
+  deltaBackroom    Int
+  beforeShelf      Int
+  afterShelf       Int
+  note             String?
+  inventory        Inventory    @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  task             Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  actor            User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt        DateTime     @default(now()) @db.Timestamptz
+
+  @@index([inventoryId, createdAt])
+}
+
+model IntegrationEvent {
+  id              String            @id @default(cuid())
+  externalEventId String            @unique
+  storeId         String?
+  type            IntegrationType
+  status          IntegrationStatus @default(RECEIVED)
+  payload         Json
+  result          Json?
+  error           String?
+  store           Store?            @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  createdAt       DateTime          @default(now()) @db.Timestamptz
+  processedAt     DateTime?         @db.Timestamptz
+
+  @@index([type, status, createdAt])
+}
+
+model FefoRule {
+  id              String  @id @default(cuid())
+  storeId         String
+  daysRemaining   Int
+  discountPercent Int
+  quarantine      Boolean @default(false)
+  active          Boolean @default(true)
+  store           Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, daysRemaining])
+}
+
+model Markdown {
+  id              String   @id @default(cuid())
+  lotId           String
+  discountPercent Int
+  originalPriceVnd Int
+  markdownPriceVnd Int
+  appliedAt       DateTime @default(now()) @db.Timestamptz
+  lot             Lot      @relation(fields: [lotId], references: [id], onDelete: Cascade)
+
+  @@index([lotId, appliedAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  storeId   String
+  taskId    String?
+  type      NotificationType
+  title     String
+  body      String
+  readAt    DateTime?        @db.Timestamptz
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store     Store            @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  task      Task?            @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt DateTime         @default(now()) @db.Timestamptz
+
+  @@index([userId, readAt, createdAt])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  storeId    String?
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  metadata   Json?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  store      Store?   @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  @@index([storeId, createdAt])
+}
+
+model MutationReceipt {
+  id               String   @id @default(cuid())
+  clientMutationId String   @unique
+  userId           String
+  action           String
+  response         Json
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now()) @db.Timestamptz
+}

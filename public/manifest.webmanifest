@@ -1,0 +1,13 @@
+{
+  "name": "BHX Smart Store Staff",
+  "short_name": "BHX Staff",
+  "description": "Ứng dụng nhiệm vụ vận hành kệ hàng BHX",
+  "start_url": "/staff",
+  "display": "standalone",
+  "background_color": "#fbf8f1",
+  "theme_color": "#08783f",
+  "lang": "vi",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

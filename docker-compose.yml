@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: bhx
+      POSTGRES_PASSWORD: bhx_dev_password
+      POSTGRES_DB: bhx_smart_store
+    ports:
+      - "5432:5432"
+    volumes:
+      - bhx_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bhx -d bhx_smart_store"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  bhx_postgres_data:
