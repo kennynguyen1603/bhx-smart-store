@@ -42,6 +42,23 @@ test("kiosk exposes the expanded catalog and finds Vietnamese text without accen
   await expect(page.getByText("Kệ phô mai", { exact: false })).toBeVisible();
 });
 
+test("store section labels do not overlap shelf cards", async ({ page }) => {
+  await page.goto("/kiosk");
+  await page.getByPlaceholder(/Tìm sữa/i).fill("banh mi");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await page.locator(".product-card").filter({ hasText: "Bánh mì sandwich lúa mạch 300g" }).click();
+
+  const overlaps = await page.evaluate(() => {
+    const shelves = Array.from(document.querySelectorAll(".map-shelf")).map((element) => element.getBoundingClientRect());
+    return Array.from(document.querySelectorAll(".map-zone-label")).flatMap((element) => {
+      const label = element.getBoundingClientRect();
+      const name = element.querySelector("strong")?.textContent || "";
+      return shelves.some((shelf) => label.left < shelf.right && label.right > shelf.left && label.top < shelf.bottom && label.bottom > shelf.top) ? [name] : [];
+    });
+  });
+  expect(overlaps).toEqual([]);
+});
+
 test("staff can sign in and see assigned tasks", async ({ page }) => {
   await page.goto("/login?callbackUrl=/staff");
   await page.getByLabel("Email").fill("staff@demo.bhx");

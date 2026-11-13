@@ -133,9 +133,14 @@ function StoreMap({ detail }: { detail: Detail }) {
       <div className="store-map" style={{ aspectRatio: `${store.mapWidth}/${store.mapHeight}`, backgroundSize: gridSize }} aria-label={`Sơ đồ đường đi đến ${product.shelf.label}`}>
         {map.zones.map((zone) => {
           const isTarget = zone.id === targetZoneId;
+          const shelvesInZone = map.shelves.filter((shelf) => shelf.x >= zone.x && shelf.x < zone.x + zone.width && shelf.y >= zone.y && shelf.y < zone.y + zone.height);
+          const isVertical = zone.height > 1;
+          const isNarrow = isVertical && zone.width === 1;
+          const shelvesOnLeft = shelvesInZone.filter((shelf) => shelf.x < zone.x + zone.width / 2).length;
+          const labelSide = isVertical && !isNarrow ? (shelvesOnLeft >= shelvesInZone.length / 2 ? "label-right" : "label-left") : "";
           return (
-            <span key={zone.id} className={`map-zone ${isTarget ? "is-target" : ""}`} style={{ left: pct(zone.x, store.mapWidth), top: pct(zone.y, store.mapHeight), width: pct(zone.width, store.mapWidth), height: pct(zone.height, store.mapHeight), backgroundColor: zone.color }}>
-              <small>{isTarget ? "ĐIỂM ĐẾN" : "KHU VỰC"}</small><strong>{zone.name}</strong>
+            <span key={zone.id} className={`map-zone ${isTarget ? "is-target" : ""} ${labelSide} ${isNarrow ? "is-narrow" : ""}`} style={{ left: pct(zone.x, store.mapWidth), top: pct(zone.y, store.mapHeight), width: pct(zone.width, store.mapWidth), height: pct(zone.height, store.mapHeight), backgroundColor: zone.color }}>
+              <span className="map-zone-label"><small>{isTarget ? "ĐIỂM ĐẾN" : "KHU VỰC"}</small><strong>{zone.name}</strong></span>
             </span>
           );
         })}

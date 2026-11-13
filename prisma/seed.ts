@@ -165,7 +165,7 @@ async function main() {
       { code: "C-09", label: "Kệ gạo đóng túi", zone: "Thực phẩm khô", sku: "RICE-ST25", x: 4, y: 5, stockNguyenTrai: 15, stockLeVanViet: 3, backroom: 25, capacity: 20, threshold: 4, lotQuantity: 20, expiryDays: 365, secondaryQuantity: null, secondaryExpiryDays: null },
       { code: "A-02", label: "Kệ bánh mì", zone: "Bánh & đồ ăn nhanh", sku: "BREAD-300", x: 6, y: 4, stockNguyenTrai: 6, stockLeVanViet: 1, backroom: 42, capacity: 10, threshold: 2, lotQuantity: 14, expiryDays: 4, secondaryQuantity: 18, secondaryExpiryDays: 7 },
       { code: "D-03", label: "Kệ nước rửa chén", zone: "Chăm sóc nhà", sku: "DISH-750", x: 9, y: 3, stockNguyenTrai: 1, stockLeVanViet: 0, backroom: 14, capacity: 10, threshold: 3, lotQuantity: 12, expiryDays: 600, secondaryQuantity: null, secondaryExpiryDays: null },
-      { code: "D-11", label: "Kệ nước giặt", zone: "Chăm sóc nhà", sku: "OMO-36", x: 8, y: 4, stockNguyenTrai: 8, stockLeVanViet: 5, backroom: 36, capacity: 12, threshold: 3, lotQuantity: 24, expiryDays: 540, secondaryQuantity: null, secondaryExpiryDays: null },
+      { code: "D-11", label: "Kệ nước giặt", zone: "Chăm sóc nhà", sku: "OMO-36", x: 9, y: 4, stockNguyenTrai: 8, stockLeVanViet: 5, backroom: 36, capacity: 12, threshold: 3, lotQuantity: 24, expiryDays: 540, secondaryQuantity: null, secondaryExpiryDays: null },
       { code: "D-13", label: "Kệ giấy gia dụng", zone: "Chăm sóc nhà", sku: "TISSUE-10", x: 9, y: 5, stockNguyenTrai: 9, stockLeVanViet: 2, backroom: 20, capacity: 12, threshold: 3, lotQuantity: 18, expiryDays: 700, secondaryQuantity: null, secondaryExpiryDays: null },
     ];
 
