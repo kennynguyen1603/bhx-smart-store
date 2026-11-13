@@ -68,6 +68,30 @@ test("staff can sign in and see assigned tasks", async ({ page }) => {
   await expect(page.getByText("Nhiệm vụ ưu tiên")).toBeVisible();
 });
 
+test("mobile staff navbar keeps labels aligned when the task badge is visible", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/login?callbackUrl=/staff");
+  await page.getByLabel("Email").fill("staff@demo.bhx");
+  await page.locator('input[type="password"]').fill("Demo@123");
+  await page.getByRole("button", { name: /Đăng nhập/i }).click();
+  await expect(page).toHaveURL(/\/staff$/);
+  await expect(page.locator(".side-nav .nav-label")).toHaveCount(4);
+  await expect(page.locator(".side-nav .count")).toBeVisible();
+
+  const layout = await page.evaluate(() => {
+    const labels = Array.from(document.querySelectorAll<HTMLElement>(".side-nav .nav-label"));
+    const taskLabel = labels.find((label) => label.textContent?.trim() === "Nhiệm vụ")!.getBoundingClientRect();
+    const badge = document.querySelector<HTMLElement>(".side-nav .count")!.getBoundingClientRect();
+    const labelTops = labels.map((label) => label.getBoundingClientRect().top);
+    return {
+      labelOffset: Math.max(...labelTops) - Math.min(...labelTops),
+      badgeOverlapsLabel: badge.left < taskLabel.right && badge.right > taskLabel.left && badge.top < taskLabel.bottom && badge.bottom > taskLabel.top,
+    };
+  });
+  expect(layout.labelOffset).toBeLessThanOrEqual(1);
+  expect(layout.badgeOverlapsLabel).toBe(false);
+});
+
 test("admin can sign in and open store operations", async ({ page }) => {
   await page.goto("/login?callbackUrl=/admin");
   await page.getByRole("button", { name: "Admin", exact: true }).click();
