@@ -8,6 +8,9 @@ test("customer kiosk can search and open a product route", async ({ page }) => {
   await expect(page.getByText("Sữa tươi Vinamilk 100% 1L")).toBeVisible();
   await page.getByText("Sữa tươi Vinamilk 100% 1L").click();
   await expect(page.getByText("ĐƯỜNG ĐI ĐẾN SẢN PHẨM")).toBeVisible();
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  await expect(page.getByText("Kiosk lối vào", { exact: true })).toBeVisible();
+  await expect(page.getByText("Đường chỉ dẫn")).toBeVisible();
   await expect(page.getByText("TRUY XUẤT NGUỒN GỐC")).toBeVisible();
 });
 

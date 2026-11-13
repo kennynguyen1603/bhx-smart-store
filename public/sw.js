@@ -1,4 +1,4 @@
-const CACHE = "bhx-smart-store-v1";
+const CACHE = "bhx-smart-store-v2";
 const APP_SHELL = ["/", "/login", "/staff", "/kiosk", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

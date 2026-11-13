@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Barcode, CheckCircle2, Clock3, Home, MapPin, ScanLine, Search, X } from "lucide-react";
+import { ArrowLeft, Barcode, CheckCircle2, Clock3, Footprints, Home, MapPin, Navigation, ScanLine, Search, X } from "lucide-react";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarcodeScanner } from "@/components/barcode-scanner";
@@ -9,7 +9,7 @@ import { formatVnd } from "@/lib/normalize";
 
 type Bootstrap = { stores: { id: string; code: string; name: string; address: string }[]; categories: string[] };
 type Product = { id: string; sku: string; barcode: string; name: string; category: string; priceVnd: number; emoji: string; availability: "AVAILABLE" | "LOW" | "OUT"; availabilityLabel: string; shelf: { id: string; code: string; label: string; zone?: string } };
-type Detail = { store: { code: string; name: string; address: string; mapWidth: number; mapHeight: number }; product: Omit<Product, "shelf"> & { unit: string; originalPriceVnd: number; shelf: { id: string; code: string; label: string; zone?: { name: string } }; traceability: { batchCode: string; origin: string; expiryDate: string; supplier: string; certificate: string | null; markdownPercent: number | null }[] }; map: { zones: { id: string; name: string; color: string; x: number; y: number; width: number; height: number }[]; shelves: { id: string; code: string; label: string; x: number; y: number; width: number; height: number }[]; start: { x: number; y: number }; destination: { x: number; y: number }; route: { x: number; y: number }[] } };
+type Detail = { store: { code: string; name: string; address: string; mapWidth: number; mapHeight: number }; product: Omit<Product, "shelf"> & { unit: string; originalPriceVnd: number; shelf: { id: string; code: string; label: string; zone?: { id: string; name: string } }; traceability: { batchCode: string; origin: string; expiryDate: string; supplier: string; certificate: string | null; markdownPercent: number | null }[] }; map: { zones: { id: string; name: string; color: string; x: number; y: number; width: number; height: number }[]; shelves: { id: string; code: string; label: string; x: number; y: number; width: number; height: number }[]; start: { x: number; y: number }; destination: { x: number; y: number }; route: { x: number; y: number }[] } };
 
 const categoryEmoji: Record<string, string> = { "Rau củ & trái cây": "🥬", "Sữa & đồ lạnh": "🥛", "Mì & thực phẩm khô": "🍜", "Bánh & đồ ăn nhanh": "🥖", "Chăm sóc nhà cửa": "🧴" };
 
@@ -78,7 +78,41 @@ export function KioskApp() {
         {!results ? <><div className="kiosk-intro"><span className="eyebrow">TÌM HÀNG NHANH HƠN</span><h1>Bạn đang tìm<br /><em>sản phẩm nào?</em></h1><p>Quét barcode bằng máy quét hoặc nhập tên để được chỉ đường đến đúng kệ hàng.</p></div><form className="kiosk-search" onSubmit={submit}><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus placeholder="Tìm sữa, trái cây, mì gói…" /><button type="button" className="button" onClick={()=>setCameraOpen(true)}><ScanLine/>Quét</button><button className="button primary" disabled={loading}>{loading ? "Đang tìm…" : "Tìm kiếm"}</button></form><div className="category-grid">{bootstrap?.categories.map((category) => <button key={category} onClick={() => search("", false, category)}><span style={{display:"block",fontSize:25,marginBottom:7}}>{categoryEmoji[category] || "🛒"}</span>{category}</button>)}</div><div style={{textAlign:"center",color:"var(--muted)",fontSize:9}}><Barcode style={{verticalAlign:"middle",marginRight:6}} />Scanner HID sẵn sàng · Quét mã và nhấn Enter</div></> : <><button className="button ghost" onClick={home}><ArrowLeft /> Quay lại</button><header className="panel-header" style={{marginTop:20}}><div><span className="section-label">KẾT QUẢ TÌM KIẾM</span><h2>{heading}</h2><p>{products.length} sản phẩm phù hợp tại {store?.name}</p></div></header><div className="product-grid">{products.map((product) => <button className="product-card" onClick={() => openProduct(product.id)} key={product.id}><span className="product-emoji">{product.emoji}</span><span><small>{product.category}</small><strong>{product.name}</strong><span className="product-price">{formatVnd(product.priceVnd)}</span><span className="product-location"><MapPin style={{width:12,verticalAlign:"middle"}} /> {product.shelf.label} · {product.shelf.zone}</span><span className={`availability ${product.availability}`}>{product.availabilityLabel}</span></span></button>)}{!products.length && <div className="empty-state">Không tìm thấy sản phẩm phù hợp. Hãy thử từ khoá ngắn hơn.</div>}</div></>}
       </section>
       <div style={{position:"fixed",right:15,bottom:12,fontSize:8,color:"var(--muted)",background:"rgba(255,255,255,.8)",padding:"7px 9px",borderRadius:9}}>Phiên tự đặt lại sau <strong style={{color:"var(--green-700)"}}>{timer}</strong></div>
-      {detail && <div className="modal-backdrop" onMouseDown={(e) => e.currentTarget === e.target && setDetail(null)}><section className="modal wide"><button className="icon-button modal-close" onClick={() => setDetail(null)}><X /></button><div className="product-detail"><aside className="product-detail-info"><div className="detail-emoji">{detail.product.emoji}</div><div><span className={`availability ${detail.product.availability}`}>● {detail.product.availabilityLabel}</span><h2>{detail.product.name}</h2><div className="product-price" style={{fontSize:22}}>{formatVnd(detail.product.priceVnd)}</div>{detail.product.priceVnd < detail.product.originalPriceVnd && <small style={{textDecoration:"line-through",color:"var(--muted)"}}>{formatVnd(detail.product.originalPriceVnd)}</small>}<p className="muted" style={{fontSize:9}}>{detail.product.shelf.label} · {detail.product.shelf.zone?.name}</p></div></aside><section className="map-side"><span className="section-label">ĐƯỜNG ĐI ĐẾN SẢN PHẨM</span><h2 style={{margin:"6px 0"}}>{detail.product.shelf.label}</h2><p className="muted" style={{fontSize:9}}>Đi theo đường nét đứt từ kiosk đến kệ được tô vàng.</p><StoreMap detail={detail} /><div className="trace-list"><span className="section-label">TRUY XUẤT NGUỒN GỐC</span>{detail.product.traceability.map((lot) => <div className="trace-row" key={lot.batchCode}><span><strong>{lot.supplier}</strong>{lot.origin} · {lot.certificate || "Đã kiểm định"}</span><span><strong>Lô {lot.batchCode}</strong>HSD {new Intl.DateTimeFormat("vi-VN").format(new Date(lot.expiryDate))}{lot.markdownPercent ? ` · Giảm ${lot.markdownPercent}%` : ""}</span></div>)}</div><button className="button primary large" style={{marginTop:16}} onClick={() => setDetail(null)}><CheckCircle2 /> Tôi đã biết đường</button></section></div></section></div>}
+      {detail && (
+        <div className="modal-backdrop" onMouseDown={(event) => event.currentTarget === event.target && setDetail(null)}>
+          <section className="modal map-modal">
+            <button className="icon-button modal-close" onClick={() => setDetail(null)} aria-label="Đóng chi tiết"><X /></button>
+            <div className="product-detail">
+              <aside className="product-detail-info">
+                <div className="detail-emoji">{detail.product.emoji}</div>
+                <div className="detail-product-copy">
+                  <span className={`availability ${detail.product.availability}`}>● {detail.product.availabilityLabel}</span>
+                  <h2>{detail.product.name}</h2>
+                  <div className="product-price detail-product-price">{formatVnd(detail.product.priceVnd)}</div>
+                  {detail.product.priceVnd < detail.product.originalPriceVnd && <small className="original-price">{formatVnd(detail.product.originalPriceVnd)}</small>}
+                </div>
+                <div className="detail-location-card">
+                  <span className="detail-location-icon"><MapPin /></span>
+                  <span><small>VỊ TRÍ SẢN PHẨM</small><strong>{detail.product.shelf.label}</strong><em>{detail.product.shelf.zone?.name || "Khu trưng bày"}</em></span>
+                </div>
+                <div className="detail-help"><Navigation /><span><strong>Đi theo tuyến màu xanh</strong><small>Điểm đến được đánh dấu màu vàng trên sơ đồ.</small></span></div>
+              </aside>
+              <section className="map-side">
+                <header className="map-heading">
+                  <div><span className="section-label">ĐƯỜNG ĐI ĐẾN SẢN PHẨM</span><h2>{detail.product.shelf.zone?.name} · {detail.product.shelf.code}</h2><p>Từ kiosk lối vào đến đúng khu vực và kệ trưng bày.</p></div>
+                  <span className="walk-time"><Footprints /><strong>Khoảng 1 phút</strong><small>đi bộ</small></span>
+                </header>
+                <StoreMap detail={detail} />
+                <div className="trace-list">
+                  <span className="section-label">TRUY XUẤT NGUỒN GỐC</span>
+                  {detail.product.traceability.map((lot) => <div className="trace-row" key={lot.batchCode}><span><strong>{lot.supplier}</strong>{lot.origin} · {lot.certificate || "Đã kiểm định"}</span><span><strong>Lô {lot.batchCode}</strong>HSD {new Intl.DateTimeFormat("vi-VN").format(new Date(lot.expiryDate))}{lot.markdownPercent ? ` · Giảm ${lot.markdownPercent}%` : ""}</span></div>)}
+                </div>
+                <button className="button primary large map-confirm" onClick={() => setDetail(null)}><CheckCircle2 /> Tôi đã biết đường</button>
+              </section>
+            </div>
+          </section>
+        </div>
+      )}
       {cameraOpen&&<div className="modal-backdrop" onMouseDown={(event)=>event.target===event.currentTarget&&setCameraOpen(false)}><section className="modal"><button className="icon-button modal-close" onClick={()=>setCameraOpen(false)}><X/></button><div className="modal-head"><span className="section-label">CAMERA SCANNER</span><h2>Quét barcode hoặc QR</h2></div><div className="modal-body"><BarcodeScanner label="Đưa mã vào giữa khung hình" onDetected={(value)=>{setCameraOpen(false);setQuery(value);void search(value,true);}}/></div></section></div>}
       {loading && <div className="toast-stack"><div className="toast"><Clock3 className="spin" /> Đang đồng bộ dữ liệu cửa hàng…</div></div>}
     </main>
@@ -89,5 +123,41 @@ function StoreMap({ detail }: { detail: Detail }) {
   const { map, store, product } = detail;
   const pct = (value: number, max: number) => `${value / max * 100}%`;
   const points = map.route.map((point) => `${point.x + .5},${point.y + .5}`).join(" ");
-  return <div className="store-map" style={{gridTemplateColumns:`repeat(${store.mapWidth},1fr)`,gridTemplateRows:`repeat(${store.mapHeight},1fr)`}}>{map.zones.map((zone) => <span key={zone.id} className="map-zone" style={{left:pct(zone.x,store.mapWidth),top:pct(zone.y,store.mapHeight),width:pct(zone.width,store.mapWidth),height:pct(zone.height,store.mapHeight),background:zone.color}} />)}{map.shelves.map((shelf) => <span key={shelf.id} className={`map-shelf ${shelf.id === product.shelf.id ? "target" : ""}`} style={{left:pct(shelf.x,store.mapWidth),top:pct(shelf.y,store.mapHeight),width:pct(shelf.width,store.mapWidth),height:pct(shelf.height,store.mapHeight)}}>{shelf.code}</span>)}<svg className="route-line" viewBox={`0 0 ${store.mapWidth} ${store.mapHeight}`} preserveAspectRatio="none"><polyline points={points} /></svg><i className="map-point" style={{left:pct(map.start.x+.5,store.mapWidth),top:pct(map.start.y+.5,store.mapHeight)}} /><i className="map-point" style={{left:pct(map.destination.x+.5,store.mapWidth),top:pct(map.destination.y+.5,store.mapHeight),background:"var(--yellow)"}} /></div>;
+  const targetZoneId = product.shelf.zone?.id;
+  const routeLength = Math.max(1, map.route.length - 1);
+  const gridSize = `${100 / store.mapWidth}% ${100 / store.mapHeight}%`;
+
+  return (
+    <div className="store-map-shell">
+      <div className="map-toolbar"><span>SƠ ĐỒ TẦNG TRỆT</span><span><i /> Tuyến đề xuất · {routeLength} đoạn</span></div>
+      <div className="store-map" style={{ aspectRatio: `${store.mapWidth}/${store.mapHeight}`, backgroundSize: gridSize }} aria-label={`Sơ đồ đường đi đến ${product.shelf.label}`}>
+        {map.zones.map((zone) => {
+          const isTarget = zone.id === targetZoneId;
+          return (
+            <span key={zone.id} className={`map-zone ${isTarget ? "is-target" : ""}`} style={{ left: pct(zone.x, store.mapWidth), top: pct(zone.y, store.mapHeight), width: pct(zone.width, store.mapWidth), height: pct(zone.height, store.mapHeight), backgroundColor: zone.color }}>
+              <small>{isTarget ? "ĐIỂM ĐẾN" : "KHU VỰC"}</small><strong>{zone.name}</strong>
+            </span>
+          );
+        })}
+        {map.shelves.map((shelf) => {
+          const isTarget = shelf.id === product.shelf.id;
+          return <span key={shelf.id} className={`map-shelf ${isTarget ? "target" : ""}`} style={{ left: pct(shelf.x, store.mapWidth), top: pct(shelf.y, store.mapHeight), width: pct(Math.max(shelf.width, 1), store.mapWidth), height: pct(Math.max(shelf.height, 1), store.mapHeight) }}><strong>{shelf.code}</strong>{isTarget && <small>{shelf.label}</small>}</span>;
+        })}
+        <span className="map-facility checkout">QUẦY THANH TOÁN</span>
+        <svg className="route-line" viewBox={`0 0 ${store.mapWidth} ${store.mapHeight}`} preserveAspectRatio="none" aria-hidden="true">
+          <polyline className="route-glow" points={points} />
+          <polyline className="route-path" points={points} />
+        </svg>
+        <span className="map-marker start" style={{ left: pct(map.start.x + .5, store.mapWidth), top: pct(map.start.y + .5, store.mapHeight) }}><i /><b>Bạn đang ở đây</b></span>
+        <span className="map-marker destination" style={{ left: pct(map.destination.x + .5, store.mapWidth), top: pct(map.destination.y + .5, store.mapHeight) }}><i /><b>{product.shelf.code}</b></span>
+      </div>
+      <div className="map-legend"><span><i className="you" /> Kiosk hiện tại</span><span><i className="route" /> Đường chỉ dẫn</span><span><i className="destination" /> {product.shelf.label}</span></div>
+      <div className="route-steps">
+        <span><b>1</b><small>Xuất phát</small><strong>Kiosk lối vào</strong></span>
+        <span><b>2</b><small>Đi theo</small><strong>Lối đi chính</strong></span>
+        <span><b>3</b><small>Rẽ vào</small><strong>{product.shelf.zone?.name || "Khu trưng bày"}</strong></span>
+        <span className="active"><b>4</b><small>Điểm đến</small><strong>{product.shelf.label}</strong></span>
+      </div>
+    </div>
+  );
 }
