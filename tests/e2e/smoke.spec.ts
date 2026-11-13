@@ -14,6 +14,25 @@ test("customer kiosk can search and open a product route", async ({ page }) => {
   await expect(page.getByText("TRUY XUẤT NGUỒN GỐC")).toBeVisible();
 });
 
+test("mobile kiosk maps yogurt to its own shelf without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/kiosk");
+  await page.getByPlaceholder(/Tìm sữa/i).fill("sữa chua");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await page.locator(".product-card").filter({ hasText: "Sữa chua Vinamilk có đường lốc 4 hộp" }).click();
+
+  await expect(page.getByRole("heading", { name: "Sữa & đồ lạnh · L-04" })).toBeVisible();
+  await expect(page.getByText("Kệ sữa chua", { exact: true }).first()).toBeVisible();
+  const layout = await page.evaluate(() => {
+    const modal = document.querySelector<HTMLElement>(".map-modal")!;
+    return {
+      pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      modalOverflow: modal.scrollWidth - modal.clientWidth,
+    };
+  });
+  expect(layout).toEqual({ pageOverflow: 0, modalOverflow: 0 });
+});
+
 test("staff can sign in and see assigned tasks", async ({ page }) => {
   await page.goto("/login?callbackUrl=/staff");
   await page.getByLabel("Email").fill("staff@demo.bhx");

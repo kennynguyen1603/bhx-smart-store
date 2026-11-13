@@ -136,12 +136,12 @@ async function main() {
     }
 
     const shelfData = [
-      { code: "L-02", label: "Kệ sữa tươi", zone: "Sữa & đồ lạnh", x: 8, y: 1 },
-      { code: "L-04", label: "Kệ sữa chua", zone: "Sữa & đồ lạnh", x: 10, y: 1 },
-      { code: "C-07", label: "Kệ mì ăn liền", zone: "Thực phẩm khô", x: 4, y: 3 },
-      { code: "T-03", label: "Bàn táo nhập khẩu", zone: "Rau củ & trái cây", x: 2, y: 1 },
-      { code: "D-11", label: "Kệ nước giặt", zone: "Chăm sóc nhà", x: 8, y: 4 },
-      { code: "A-02", label: "Kệ bánh mì", zone: "Thực phẩm khô", x: 6, y: 3 },
+      { code: "L-02", label: "Kệ sữa tươi", zone: "Sữa & đồ lạnh", sku: "MILK-1L", x: 8, y: 1, stock: 3, backroom: 12, capacity: 18, threshold: 4, lotQuantity: 8, expiryDays: 15 },
+      { code: "L-04", label: "Kệ sữa chua", zone: "Sữa & đồ lạnh", sku: "YOGURT-4", x: 10, y: 1, stock: 12, backroom: 24, capacity: 16, threshold: 3, lotQuantity: 16, expiryDays: 2 },
+      { code: "C-07", label: "Kệ mì ăn liền", zone: "Thực phẩm khô", sku: "NOODLE-75", x: 4, y: 3, stock: 7, backroom: 18, capacity: 24, threshold: 6, lotQuantity: 12, expiryDays: 25 },
+      { code: "T-03", label: "Bàn táo nhập khẩu", zone: "Rau củ & trái cây", sku: "APPLE-1KG", x: 2, y: 1, stock: 20, backroom: 30, capacity: 24, threshold: 5, lotQuantity: 20, expiryDays: 45 },
+      { code: "D-11", label: "Kệ nước giặt", zone: "Chăm sóc nhà", sku: "OMO-36", x: 8, y: 4, stock: 8, backroom: 36, capacity: 12, threshold: 3, lotQuantity: 24, expiryDays: 55 },
+      { code: "A-02", label: "Kệ bánh mì", zone: "Thực phẩm khô", sku: "BREAD-300", x: 6, y: 3, stock: 6, backroom: 42, capacity: 10, threshold: 2, lotQuantity: 28, expiryDays: 65 },
     ];
 
     for (const [index, shelfInput] of shelfData.entries()) {
@@ -150,36 +150,44 @@ async function main() {
         update: { label: shelfInput.label, x: shelfInput.x, y: shelfInput.y, zoneId: zoneByName.get(shelfInput.zone)!.id },
         create: { storeId: store.id, zoneId: zoneByName.get(shelfInput.zone)!.id, code: shelfInput.code, label: shelfInput.label, x: shelfInput.x, y: shelfInput.y },
       });
-      const productDataItem = productData[index];
+      const productDataItem = productData.find((item) => item.sku === shelfInput.sku)!;
       const product = products.get(productDataItem.sku)!;
       const storeOffset = store.code === "NT-Q5" ? 0 : 3;
-      const stock = [3, 7, 12, 20, 8, 6][index] + storeOffset;
-      const capacities = [18, 24, 16, 24, 12, 10];
-      const thresholds = [4, 6, 3, 5, 3, 2];
+      const stock = shelfInput.stock + storeOffset;
+      await prisma.inventory.deleteMany({ where: { storeId: store.id, shelfId: shelf.id, productId: { not: product.id } } });
       await prisma.inventory.upsert({
         where: { storeId_shelfId_productId: { storeId: store.id, shelfId: shelf.id, productId: product.id } },
-        update: { onShelf: stock, backroom: 12 + index * 6, capacity: capacities[index], lowThreshold: thresholds[index] },
-        create: { storeId: store.id, shelfId: shelf.id, productId: product.id, onShelf: stock, backroom: 12 + index * 6, capacity: capacities[index], lowThreshold: thresholds[index] },
+        update: { onShelf: stock, backroom: shelfInput.backroom, capacity: shelfInput.capacity, lowThreshold: shelfInput.threshold },
+        create: { storeId: store.id, shelfId: shelf.id, productId: product.id, onShelf: stock, backroom: shelfInput.backroom, capacity: shelfInput.capacity, lowThreshold: shelfInput.threshold },
       });
       await prisma.eSL.upsert({
         where: { code: `ESL-${store.code}-${shelfInput.code}` },
-        update: { shelfId: shelf.id, productId: product.id, storeId: store.id },
-        create: { code: `ESL-${store.code}-${shelfInput.code}`, storeId: store.id, shelfId: shelf.id, productId: product.id, status: EslStatus.ONLINE, ledOn: stock <= thresholds[index] },
+        update: { shelfId: shelf.id, productId: product.id, storeId: store.id, status: EslStatus.ONLINE, ledOn: stock <= shelfInput.threshold },
+        create: { code: `ESL-${store.code}-${shelfInput.code}`, storeId: store.id, shelfId: shelf.id, productId: product.id, status: EslStatus.ONLINE, ledOn: stock <= shelfInput.threshold },
       });
 
       const supplier = suppliers.get(productDataItem.supplier)!;
+      const batchCode = `LOT-${store.code}-${index + 1}`;
+      await prisma.lot.deleteMany({ where: { storeId: store.id, batchCode, productId: { not: product.id } } });
       await prisma.lot.upsert({
-        where: { storeId_productId_batchCode: { storeId: store.id, productId: product.id, batchCode: `LOT-${store.code}-${index + 1}` } },
-        update: {},
+        where: { storeId_productId_batchCode: { storeId: store.id, productId: product.id, batchCode } },
+        update: {
+          supplierId: supplier.id,
+          origin: productDataItem.supplier === "FRESH" ? "New Zealand" : "Việt Nam",
+          receivedAt: addDays(-2),
+          expiryDate: addDays(shelfInput.expiryDays),
+          quantity: shelfInput.lotQuantity,
+          status: LotStatus.AVAILABLE,
+        },
         create: {
           storeId: store.id,
           productId: product.id,
           supplierId: supplier.id,
-          batchCode: `LOT-${store.code}-${index + 1}`,
+          batchCode,
           origin: productDataItem.supplier === "FRESH" ? "New Zealand" : "Việt Nam",
           receivedAt: addDays(-2),
-          expiryDate: index === 2 ? addDays(2) : addDays(15 + index * 10),
-          quantity: 8 + index * 4,
+          expiryDate: addDays(shelfInput.expiryDays),
+          quantity: shelfInput.lotQuantity,
           status: LotStatus.AVAILABLE,
         },
       });

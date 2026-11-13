@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { availabilityLabel, availabilityOf, gridRoute } from "@/lib/kiosk";
+import { availabilityLabel, availabilityOf, routeToShelf } from "@/lib/kiosk";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -21,7 +21,21 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     take: 3,
   });
   const kiosk = store.kiosks[0] || { x: 0, y: store.mapHeight - 1 };
-  const route = gridRoute({ x: kiosk.x, y: kiosk.y }, { x: inventory.shelf.x, y: inventory.shelf.y });
+  const targetShelf = {
+    x: inventory.shelf.x,
+    y: inventory.shelf.y,
+    width: inventory.shelf.width,
+    height: inventory.shelf.height,
+  };
+  const navigation = routeToShelf({ x: kiosk.x, y: kiosk.y }, targetShelf, {
+    width: store.mapWidth,
+    height: store.mapHeight,
+    obstacles: [
+      ...store.zones.map(({ x, y, width, height }) => ({ x, y, width, height })),
+      ...store.shelves.map(({ x, y, width, height }) => ({ x, y, width, height })),
+      { x: 4, y: store.mapHeight - 1, width: 4, height: 1 },
+    ],
+  });
   const availability = availabilityOf(inventory);
   return Response.json({
     store: { id: store.id, code: store.code, name: store.name, address: store.address, mapWidth: store.mapWidth, mapHeight: store.mapHeight },
@@ -40,6 +54,6 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       shelf: inventory.shelf,
       traceability: lots.map((lot) => ({ batchCode: lot.batchCode, origin: lot.origin, expiryDate: lot.expiryDate, supplier: lot.supplier.name, certificate: lot.supplier.certificate, markdownPercent: lot.markdownPercent })),
     },
-    map: { zones: store.zones, shelves: store.shelves, start: { x: kiosk.x, y: kiosk.y }, destination: { x: inventory.shelf.x, y: inventory.shelf.y }, route },
+    map: { zones: store.zones, shelves: store.shelves, start: { x: kiosk.x, y: kiosk.y }, destination: navigation.destination, route: navigation.route },
   });
 }

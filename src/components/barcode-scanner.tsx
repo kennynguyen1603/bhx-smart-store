@@ -1,7 +1,7 @@
 "use client";
 
 import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
-import { Camera, CameraOff } from "lucide-react";
+import { Camera, CameraOff, ScanLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 export function BarcodeScanner({ onDetected, label = "Bật camera" }: { onDetected(value: string): void; label?: string }) {
@@ -29,9 +29,17 @@ export function BarcodeScanner({ onDetected, label = "Bật camera" }: { onDetec
 
   useEffect(() => stop, []);
   return (
-    <div className="scan-area">
-      {active && <video ref={videoRef} muted playsInline />}
-      <button type="button" className="button" onClick={active ? stop : start}>{active ? <><CameraOff /> Tắt camera</> : <><Camera /> {label}</>}</button>
+    <div className={`scan-area ${active ? "is-active" : ""}`}>
+      <div className="scan-heading">
+        <span className="scan-heading-icon"><ScanLine /></span>
+        <span><strong>{active ? "Đang tìm mã" : label}</strong><small>{active ? "Giữ thiết bị ổn định trong khung" : "Camera chỉ hoạt động khi bạn cho phép"}</small></span>
+        <span className={`scan-status ${active ? "active" : ""}`}><i />{active ? "Đang quét" : "Sẵn sàng"}</span>
+      </div>
+      <div className="scanner-viewport">
+        {active ? <video ref={videoRef} muted playsInline /> : <div className="scanner-placeholder"><Camera /><strong>Quét nhanh bằng camera</strong><small>Đặt mã ESL hoặc barcode vào giữa khung hình</small></div>}
+        {active && <div className="scanner-frame" aria-hidden="true"><i /><i /><i /><i /><span>ĐƯA MÃ VÀO KHUNG</span></div>}
+      </div>
+      <button type="button" className={`button scan-toggle ${active ? "" : "primary"}`} onClick={active ? stop : start}>{active ? <><CameraOff /> Tắt camera</> : <><Camera /> Mở camera</>}</button>
       {error && <div className="alert-box danger">{error}</div>}
     </div>
   );
