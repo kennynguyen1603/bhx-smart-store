@@ -14,6 +14,7 @@ import { ApiError } from "@/lib/api-auth";
 import type { SaleEventInput, SupplierLotInput, WmsInventoryInput } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
 import { sendPushToStore } from "@/lib/push";
+import { assertTaskClaimable } from "@/lib/task-access";
 
 const ACTIVE_TASKS: TaskStatus[] = [TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED];
 const STARTABLE_TASKS: TaskStatus[] = [TaskStatus.OPEN, TaskStatus.BLOCKED];
@@ -176,6 +177,7 @@ export async function startTask(taskId: string, user: { id: string; role: Role; 
     const task = await tx.task.findUnique({ where: { id: taskId } });
     if (!task) throw new ApiError(404, "Không tìm thấy nhiệm vụ", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
+    assertTaskClaimable(task, user);
     if (!STARTABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ không thể bắt đầu", "INVALID_TASK_STATE");
     const updated = await tx.task.update({ where: { id: taskId }, data: { status: TaskStatus.IN_PROGRESS, assigneeId: user.id, startedAt: new Date() } });
     await tx.taskEvent.create({ data: { taskId, actorId: user.id, type: "STARTED" } });
@@ -196,6 +198,7 @@ export async function completeRestock(
     const task = await tx.task.findUnique({ where: { id: taskId } });
     if (!task || task.type !== TaskType.RESTOCK) throw new ApiError(404, "Không tìm thấy nhiệm vụ bổ sung", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
+    assertTaskClaimable(task, user);
     if (!RESTOCKABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
     const inventory = await tx.inventory.findUniqueOrThrow({ where: { storeId_shelfId_productId: { storeId: task.storeId, shelfId: task.shelfId, productId: task.productId } } });
     if (inventory.version !== input.expectedVersion) {
@@ -266,6 +269,7 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
     const task = await tx.task.findUnique({ where: { id: taskId }, include: { lot: true, product: true } });
     if (!task?.lot || !FEFO_TASKS.includes(task.type)) throw new ApiError(404, "Không tìm thấy nhiệm vụ FEFO", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
+    assertTaskClaimable(task, user);
     if (!FEFO_COMPLETABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
     let lot;
     if (task.type === TaskType.QUARANTINE) {

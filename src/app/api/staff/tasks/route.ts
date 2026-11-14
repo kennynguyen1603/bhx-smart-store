@@ -1,6 +1,7 @@
 import { TaskStatus } from "@/generated/prisma/client";
 import { apiErrorResponse, ensureStoreAccess, requireUser } from "@/lib/api-auth";
 import { prisma } from "@/lib/db";
+import { taskVisibilityWhere } from "@/lib/task-access";
 
 export async function GET(request: Request) {
   try {
@@ -9,16 +10,19 @@ export async function GET(request: Request) {
     const storeId = url.searchParams.get("storeId") || user.defaultStoreId;
     if (!storeId) return Response.json({ stores: [], tasks: [], metrics: {} });
     ensureStoreAccess(user, storeId);
+    const taskWhere = taskVisibilityWhere(user, storeId);
     const [stores, tasks, inventories, notifications, recentEvents] = await Promise.all([
       prisma.store.findMany({ where: { id: { in: user.role === "ADMIN" ? undefined : user.storeIds }, active: true }, select: { id: true, code: true, name: true, address: true }, orderBy: { name: "asc" } }),
-      prisma.task.findMany({ where: { storeId }, include: { product: true, shelf: { include: { esls: true } }, lot: { include: { supplier: true } }, assignee: { select: { id: true, name: true } } }, orderBy: [{ status: "asc" }, { priority: "desc" }, { createdAt: "desc" }] }),
+      prisma.task.findMany({ where: taskWhere, include: { product: true, shelf: { include: { esls: true } }, lot: { include: { supplier: true } }, assignee: { select: { id: true, name: true } } }, orderBy: [{ status: "asc" }, { priority: "desc" }, { createdAt: "desc" }] }),
       prisma.inventory.findMany({ where: { storeId }, include: { product: true, shelf: true }, orderBy: { updatedAt: "desc" } }),
       prisma.notification.findMany({ where: { userId: user.id, storeId }, orderBy: { createdAt: "desc" }, take: 20 }),
-      prisma.taskEvent.findMany({ where: { task: { storeId } }, include: { task: { include: { product: true, shelf: true } }, actor: { select: { name: true } } }, orderBy: { createdAt: "desc" }, take: 20 }),
+      prisma.taskEvent.findMany({ where: { task: taskWhere }, include: { task: { include: { product: true, shelf: true } }, actor: { select: { name: true } } }, orderBy: { createdAt: "desc" }, take: 20 }),
     ]);
     const inventoryByKey = new Map(inventories.map((item) => [`${item.shelfId}:${item.productId}`, item]));
     const serializedTasks = tasks.map((task) => ({
       ...task,
+      assignee: task.assignee ? { id: task.assignee.id, name: task.assignee.name } : null,
+      completedAt: task.completedAt?.toISOString() || null,
       inventory: inventoryByKey.get(`${task.shelfId}:${task.productId}`) || null,
     }));
     const activeStatuses: TaskStatus[] = [TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED];

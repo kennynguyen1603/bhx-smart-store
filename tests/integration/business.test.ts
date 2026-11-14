@@ -1,20 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiError } from "@/lib/api-auth";
-import { completeFefoTask, completeRestock, processSaleEvent, runFefoEngine } from "@/lib/business";
+import { completeFefoTask, completeRestock, processSaleEvent, runFefoEngine, startTask } from "@/lib/business";
 import { prisma } from "@/lib/db";
 import { Role, TaskPriority, TaskStatus, TaskType } from "@/generated/prisma/client";
 
 const STORE_CODE = "TST-INT";
 const PRODUCT_SKU = "TST-SKU";
 const USER_EMAIL = "integration@demo.bhx";
+const STAFF_EMAILS = ["integration-staff-1@demo.bhx", "integration-staff-2@demo.bhx"];
 const EVENT_PREFIX = "integration-test-";
 
 let fixture: { storeId: string; productId: string; shelfId: string; inventoryId: string; userId: string; supplierId: string };
 
 async function cleanupFixture() {
   await prisma.integrationEvent.deleteMany({ where: { externalEventId: { startsWith: EVENT_PREFIX } } });
-  await prisma.user.deleteMany({ where: { email: USER_EMAIL } });
+  await prisma.user.deleteMany({ where: { email: { in: [USER_EMAIL, ...STAFF_EMAILS] } } });
   await prisma.store.deleteMany({ where: { code: STORE_CODE } });
   await prisma.product.deleteMany({ where: { sku: PRODUCT_SKU } });
   await prisma.supplier.deleteMany({ where: { code: "TST-SUP" } });
@@ -52,6 +53,27 @@ beforeEach(async () => {
 afterAll(cleanupFixture);
 
 describe("POS and RESTOCK business flow", () => {
+  it("keeps the original assignee when competing Staff tries to claim a task", async () => {
+    const [firstStaff, secondStaff] = await Promise.all(STAFF_EMAILS.map((email, index) => prisma.user.create({
+      data: {
+        email,
+        name: `Integration Staff ${index + 1}`,
+        passwordHash: "not-used",
+        role: Role.STAFF,
+        userStores: { create: { storeId: fixture.storeId, isDefault: true } },
+      },
+    })));
+    const task = await prisma.task.create({
+      data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, status: TaskStatus.OPEN, title: "Competing claim test" },
+    });
+
+    await startTask(task.id, { id: firstStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, randomUUID());
+    await expect(startTask(task.id, { id: secondStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, randomUUID()))
+      .rejects.toMatchObject({ status: 409, code: "TASK_ALREADY_ASSIGNED" } satisfies Partial<ApiError>);
+
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).assigneeId).toBe(firstStaff.id);
+  });
+
   it("processes a POS event once, floors stock at zero, creates one task and turns on the ESL", async () => {
     const externalEventId = `${EVENT_PREFIX}${randomUUID()}`;
     const input = { externalEventId, storeCode: STORE_CODE, productSku: PRODUCT_SKU, shelfCode: "T-01", quantity: 9, priceVnd: 10_000, occurredAt: new Date() };

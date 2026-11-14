@@ -159,6 +159,62 @@ test("staff can sign in and see assigned tasks", async ({ page }) => {
   await expect(page.getByText("Nhiệm vụ ưu tiên")).toBeVisible();
 });
 
+test("Staff history is private while Manager completed tasks show oversight details", async ({ page }) => {
+  test.setTimeout(60_000);
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const staff = await prisma.user.findUniqueOrThrow({ where: { email: "staff@demo.bhx" }, include: { userStores: true } });
+  const inventory = await prisma.inventory.findFirstOrThrow({ where: { storeId: staff.userStores[0].storeId } });
+  const otherStaff = await prisma.user.create({
+    data: {
+      email: `visibility-${Date.now()}@demo.bhx`,
+      name: "Nhân viên Khác",
+      passwordHash: "not-used",
+      role: "STAFF",
+      userStores: { create: { storeId: inventory.storeId, isDefault: true } },
+    },
+  });
+  const completedAt = new Date("2026-11-15T03:45:00.000Z");
+  const task = await prisma.task.create({
+    data: {
+      storeId: inventory.storeId,
+      productId: inventory.productId,
+      shelfId: inventory.shelfId,
+      assigneeId: otherStaff.id,
+      type: "RESTOCK",
+      status: "COMPLETED",
+      title: "Nhiệm vụ riêng của nhân viên khác",
+      completedAt,
+      events: { create: { actorId: otherStaff.id, type: "COMPLETED", note: "Sự kiện riêng Task 2" } },
+    },
+  });
+
+  try {
+    await page.goto("/login?callbackUrl=/staff");
+    await page.getByLabel("Email").fill("staff@demo.bhx");
+    await page.locator('input[type="password"]').fill("Demo@123");
+    await page.getByRole("button", { name: /Đăng nhập/i }).click();
+    await page.getByRole("button", { name: "Lịch sử" }).click();
+    await expect(page.getByText("Sự kiện riêng Task 2")).toHaveCount(0);
+
+    await page.context().clearCookies();
+    await page.goto("/login?callbackUrl=/staff");
+    await page.getByRole("button", { name: "Manager", exact: true }).click();
+    await page.locator('input[type="password"]').fill("Demo@123");
+    await page.getByRole("button", { name: /Đăng nhập/i }).click();
+    await page.getByRole("button", { name: "Nhiệm vụ" }).click();
+    await page.getByRole("button", { name: "Hoàn thành" }).click();
+
+    const row = page.locator(".task-row").filter({ hasText: task.title });
+    await expect(row).toContainText("Nhân viên Khác");
+    await expect(row).toContainText(new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(completedAt));
+    await expect(row).toBeDisabled();
+  } finally {
+    await prisma.task.delete({ where: { id: task.id } });
+    await prisma.user.delete({ where: { id: otherStaff.id } });
+  }
+});
+
 test("mobile staff navbar keeps labels aligned when the task badge is visible", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/login?callbackUrl=/staff");
