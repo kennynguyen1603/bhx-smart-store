@@ -53,7 +53,7 @@ beforeEach(async () => {
 afterAll(cleanupFixture);
 
 describe("POS and RESTOCK business flow", () => {
-  it("keeps the original assignee when competing Staff tries to claim a task", async () => {
+  it("atomically allows exactly one Staff member to claim a task", async () => {
     const [firstStaff, secondStaff] = await Promise.all(STAFF_EMAILS.map((email, index) => prisma.user.create({
       data: {
         email,
@@ -67,11 +67,16 @@ describe("POS and RESTOCK business flow", () => {
       data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, status: TaskStatus.OPEN, title: "Competing claim test" },
     });
 
-    await startTask(task.id, { id: firstStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, randomUUID());
-    await expect(startTask(task.id, { id: secondStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, randomUUID()))
-      .rejects.toMatchObject({ status: 409, code: "TASK_ALREADY_ASSIGNED" } satisfies Partial<ApiError>);
+    const results = await Promise.allSettled([
+      startTask(task.id, { id: firstStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, randomUUID()),
+      startTask(task.id, { id: secondStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, randomUUID()),
+    ]);
 
-    expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).assigneeId).toBe(firstStaff.id);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ status: 409, code: "TASK_ALREADY_ASSIGNED" } satisfies Partial<ApiError>);
+    const ownerId = (await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).assigneeId;
+    expect(ownerId).toBe(results[0].status === "fulfilled" ? firstStaff.id : secondStaff.id);
   });
 
   it("processes a POS event once, floors stock at zero, creates one task and turns on the ESL", async () => {

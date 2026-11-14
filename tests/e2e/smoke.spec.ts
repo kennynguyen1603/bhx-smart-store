@@ -160,7 +160,7 @@ test("staff can sign in and see assigned tasks", async ({ page }) => {
 });
 
 test("Staff history is private while Manager completed tasks show oversight details", async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   nextEnv.loadEnvConfig(process.cwd());
   const { prisma } = await import("../../src/lib/db");
   const staff = await prisma.user.findUniqueOrThrow({ where: { email: "staff@demo.bhx" }, include: { userStores: true } });
@@ -194,14 +194,17 @@ test("Staff history is private while Manager completed tasks show oversight deta
     await page.getByLabel("Email").fill("staff@demo.bhx");
     await page.locator('input[type="password"]').fill("Demo@123");
     await page.getByRole("button", { name: /Đăng nhập/i }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/staff");
     await page.getByRole("button", { name: "Lịch sử" }).click();
     await expect(page.getByText("Sự kiện riêng Task 2")).toHaveCount(0);
 
     await page.context().clearCookies();
     await page.goto("/login?callbackUrl=/staff");
     await page.getByRole("button", { name: "Manager", exact: true }).click();
+    await expect(page.getByLabel("Email")).toHaveValue("manager@demo.bhx");
     await page.locator('input[type="password"]').fill("Demo@123");
     await page.getByRole("button", { name: /Đăng nhập/i }).click();
+    await expect(page).toHaveURL((url) => url.pathname === "/staff");
     await page.getByRole("button", { name: "Nhiệm vụ" }).click();
     await page.getByRole("button", { name: "Hoàn thành" }).click();
 

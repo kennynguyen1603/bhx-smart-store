@@ -179,7 +179,25 @@ export async function startTask(taskId: string, user: { id: string; role: Role; 
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
     assertTaskClaimable(task, user);
     if (!STARTABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ không thể bắt đầu", "INVALID_TASK_STATE");
-    const updated = await tx.task.update({ where: { id: taskId }, data: { status: TaskStatus.IN_PROGRESS, assigneeId: user.id, startedAt: new Date() } });
+    const startedAt = new Date();
+    if (user.role === Role.STAFF) {
+      const claimed = await tx.task.updateMany({
+        where: {
+          id: taskId,
+          status: { in: STARTABLE_TASKS },
+          OR: [{ assigneeId: null }, { assigneeId: user.id }],
+        },
+        data: { status: TaskStatus.IN_PROGRESS, assigneeId: user.id, startedAt },
+      });
+      if (claimed.count !== 1) {
+        const current = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+        assertTaskClaimable(current, user);
+        throw new ApiError(409, "Nhiệm vụ không thể bắt đầu", "INVALID_TASK_STATE");
+      }
+    } else {
+      await tx.task.update({ where: { id: taskId }, data: { status: TaskStatus.IN_PROGRESS, assigneeId: user.id, startedAt } });
+    }
+    const updated = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
     await tx.taskEvent.create({ data: { taskId, actorId: user.id, type: "STARTED" } });
     const response = { task: { id: updated.id, status: updated.status, startedAt: updated.startedAt?.toISOString() } };
     await tx.mutationReceipt.create({ data: { clientMutationId, userId: user.id, action: "TASK_START", response: json(response) } });
