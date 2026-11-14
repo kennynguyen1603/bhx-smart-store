@@ -14,6 +14,52 @@ test("customer kiosk can search and open a product route", async ({ page }) => {
   await expect(page.getByText("TRUY XUẤT NGUỒN GỐC")).toBeVisible();
 });
 
+test("camera scanner attaches the media stream to a persistent video preview", async ({ page }) => {
+  await page.addInitScript(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 480;
+    const context = canvas.getContext("2d")!;
+    let frame = 0;
+    const draw = () => {
+      context.fillStyle = "#dff3e7";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#08783f";
+      context.fillRect((frame++ * 8) % canvas.width, 0, 40, canvas.height);
+      requestAnimationFrame(draw);
+    };
+    draw();
+
+    const stream = canvas.captureStream(15);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => stream,
+        enumerateDevices: async () => [],
+      },
+    });
+  });
+
+  await page.goto("/kiosk");
+  await page.getByRole("button", { name: "Quét", exact: true }).click();
+  await page.getByRole("button", { name: /Mở camera/i }).click();
+
+  await expect(page.getByText("Đang quét", { exact: true })).toBeVisible();
+  const preview = await page.locator(".scanner-viewport video").evaluate((video: HTMLVideoElement) => ({
+    hasStream: video.srcObject instanceof MediaStream,
+    hasCurrentData: video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+    width: video.videoWidth,
+    height: video.videoHeight,
+  }));
+  expect(preview.hasStream).toBe(true);
+  expect(preview.hasCurrentData).toBe(true);
+  expect(preview.width).toBeGreaterThan(0);
+  expect(preview.height).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: /Tắt camera/i }).click();
+  await expect(page.getByRole("button", { name: /Mở camera/i })).toBeVisible();
+});
+
 test("mobile kiosk maps yogurt to its own shelf without horizontal overflow", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/kiosk");
