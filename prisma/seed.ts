@@ -29,6 +29,14 @@ const addDays = (days: number) => {
 };
 
 async function main() {
+  if (process.env.SEED_IF_EMPTY === "true") {
+    const existingUsers = await prisma.user.count();
+    if (existingUsers > 0) {
+      console.info("Skipped demo seed because production data already exists");
+      return;
+    }
+  }
+
   const passwordHash = await hash(process.env.DEMO_PASSWORD || "Demo@123", 12);
 
   const [nguyenTrai, leVanViet] = await Promise.all([
