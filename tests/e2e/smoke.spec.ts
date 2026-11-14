@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import nextEnv from "@next/env";
 
 test("customer kiosk can search and open a product route", async ({ page }) => {
   await page.goto("/kiosk");
@@ -12,6 +13,50 @@ test("customer kiosk can search and open a product route", async ({ page }) => {
   await expect(page.getByText("Kiosk lối vào", { exact: true })).toBeVisible();
   await expect(page.getByText("Đường chỉ dẫn")).toBeVisible();
   await expect(page.getByText("TRUY XUẤT NGUỒN GỐC")).toBeVisible();
+});
+
+test("discounted FEFO price is consistent in kiosk list and detail", async ({ page, request }) => {
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const bootstrapResponse = await request.get("/api/kiosk/bootstrap");
+  const bootstrap = await bootstrapResponse.json() as { stores: { code: string }[] };
+  const product = await prisma.product.findUniqueOrThrow({ where: { sku: "MILK-1L" } });
+  const store = await prisma.store.findUniqueOrThrow({ where: { code: bootstrap.stores[0].code } });
+  const lots = await prisma.lot.findMany({
+    where: { productId: product.id, storeId: store.id },
+    orderBy: { expiryDate: "asc" },
+  });
+  const originalLots = lots.map(({ id, status, quantity, markdownPercent, markdownPriceVnd }) => ({ id, status, quantity, markdownPercent, markdownPriceVnd }));
+
+  try {
+    await prisma.lot.updateMany({
+      where: { productId: product.id, storeId: store.id },
+      data: { status: "AVAILABLE", markdownPercent: null, markdownPriceVnd: null },
+    });
+    await prisma.lot.update({
+      where: { id: lots[0].id },
+      data: { status: "MARKED_DOWN", quantity: Math.max(1, lots[0].quantity), markdownPercent: 20, markdownPriceVnd: 26_080 },
+    });
+
+    await page.goto("/kiosk");
+    const storeSelector = page.getByRole("combobox");
+    await expect(storeSelector).toHaveValue(store.code);
+    await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
+    await page.getByRole("button", { name: "Tìm kiếm" }).click();
+
+    const card = page.locator(".product-card").filter({ hasText: "Sữa tươi Vinamilk 100% 1L" });
+    await expect(card.getByText("26.080 ₫", { exact: true })).toBeVisible();
+    await expect(card.getByText("32.600 ₫", { exact: true })).toBeVisible();
+    await expect(card.getByText("Giảm 20%", { exact: true })).toBeVisible();
+    await card.click();
+
+    const detail = page.locator(".product-detail-info");
+    await expect(detail.getByText("26.080 ₫", { exact: true })).toBeVisible();
+    await expect(detail.getByText("32.600 ₫", { exact: true })).toBeVisible();
+    await expect(detail.getByText("Giảm 20%", { exact: true })).toBeVisible();
+  } finally {
+    await Promise.all(originalLots.map(({ id, ...data }) => prisma.lot.update({ where: { id }, data })));
+  }
 });
 
 test("camera scanner attaches the media stream to a persistent video preview", async ({ page }) => {

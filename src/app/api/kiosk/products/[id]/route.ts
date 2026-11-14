@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { availabilityLabel, availabilityOf, routeToShelf } from "@/lib/kiosk";
+import { selectPublicPrice } from "@/lib/kiosk-pricing";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -15,7 +16,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const inventory = await prisma.inventory.findFirst({ where: { storeId: store.id, productId: product.id }, include: { shelf: { include: { zone: true } } } });
   if (!inventory) return Response.json({ error: { code: "NOT_SOLD_HERE", message: "Sản phẩm không có tại chi nhánh này" } }, { status: 404 });
   const lots = await prisma.lot.findMany({
-    where: { storeId: store.id, productId: product.id, quantity: { gt: 0 }, status: { not: "QUARANTINED" } },
+    where: { storeId: store.id, productId: product.id, quantity: { gt: 0 }, status: { in: ["AVAILABLE", "MARKED_DOWN"] } },
     include: { supplier: true },
     orderBy: { expiryDate: "asc" },
     take: 3,
@@ -37,6 +38,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     ],
   });
   const availability = availabilityOf(inventory);
+  const price = selectPublicPrice(product.basePriceVnd, lots);
   return Response.json({
     store: { id: store.id, code: store.code, name: store.name, address: store.address, mapWidth: store.mapWidth, mapHeight: store.mapHeight },
     product: {
@@ -47,8 +49,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       category: product.category,
       unit: product.unit,
       emoji: product.emoji,
-      priceVnd: lots[0]?.markdownPriceVnd || product.basePriceVnd,
-      originalPriceVnd: product.basePriceVnd,
+      ...price,
       availability,
       availabilityLabel: availabilityLabel(availability),
       shelf: inventory.shelf,

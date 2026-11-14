@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { availabilityLabel, availabilityOf } from "@/lib/kiosk";
+import { selectPublicPrice } from "@/lib/kiosk-pricing";
 import { normalizeSearch } from "@/lib/normalize";
 
 export async function GET(request: Request) {
@@ -18,20 +19,32 @@ export async function GET(request: Request) {
         ...(category ? { category } : {}),
       },
     },
-    include: { product: true, shelf: { include: { zone: true } } },
+    include: {
+      product: {
+        include: {
+          lots: {
+            where: { storeId: store.id, quantity: { gt: 0 }, status: { in: ["AVAILABLE", "MARKED_DOWN"] } },
+            select: { status: true, quantity: true, expiryDate: true, markdownPercent: true, markdownPriceVnd: true },
+            orderBy: { expiryDate: "asc" },
+          },
+        },
+      },
+      shelf: { include: { zone: true } },
+    },
     orderBy: { product: { name: "asc" } },
   });
   return Response.json({
     store,
     products: inventories.map((inventory) => {
       const availability = availabilityOf(inventory);
+      const price = selectPublicPrice(inventory.product.basePriceVnd, inventory.product.lots);
       return {
         id: inventory.product.id,
         sku: inventory.product.sku,
         barcode: inventory.product.barcode,
         name: inventory.product.name,
         category: inventory.product.category,
-        priceVnd: inventory.product.basePriceVnd,
+        ...price,
         emoji: inventory.product.emoji,
         availability,
         availabilityLabel: availabilityLabel(availability),
