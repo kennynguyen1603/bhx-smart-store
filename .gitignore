@@ -11,3 +11,4 @@ src/generated/prisma/
 *.log
 *.tsbuildinfo
 .DS_Store
+.worktrees/
