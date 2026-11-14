@@ -1,5 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import nextEnv from "@next/env";
+
+async function authenticateStaffApp(page: Page, email: string) {
+  const request = page.context().request;
+  const csrfResponse = await request.get("/api/auth/csrf");
+  expect(csrfResponse.ok()).toBe(true);
+  const { csrfToken } = await csrfResponse.json() as { csrfToken: string };
+  const loginResponse = await request.post("/api/auth/callback/credentials", {
+    form: { csrfToken, email, password: "Demo@123", callbackUrl: "/staff", json: "true" },
+    headers: { "X-Auth-Return-Redirect": "1" },
+  });
+  expect(loginResponse.ok()).toBe(true);
+  const cookies = await page.context().cookies();
+  expect(cookies.some((cookie) => cookie.name.endsWith("session-token"))).toBe(true);
+  await page.goto("/staff");
+  await expect(page).toHaveURL((url) => url.pathname === "/staff");
+}
 
 test("customer kiosk can search and open a product route", async ({ page }) => {
   await page.goto("/kiosk");
@@ -165,9 +181,10 @@ test("Staff history is private while Manager completed tasks show oversight deta
   const { prisma } = await import("../../src/lib/db");
   const staff = await prisma.user.findUniqueOrThrow({ where: { email: "staff@demo.bhx" }, include: { userStores: true } });
   const inventory = await prisma.inventory.findFirstOrThrow({ where: { storeId: staff.userStores[0].storeId } });
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const otherStaff = await prisma.user.create({
     data: {
-      email: `visibility-${Date.now()}@demo.bhx`,
+      email: `visibility-${runId}@demo.bhx`,
       name: "Nhân viên Khác",
       passwordHash: "not-used",
       role: "STAFF",
@@ -183,28 +200,19 @@ test("Staff history is private while Manager completed tasks show oversight deta
       assigneeId: otherStaff.id,
       type: "RESTOCK",
       status: "COMPLETED",
-      title: "Nhiệm vụ riêng của nhân viên khác",
+      title: `Nhiệm vụ riêng của nhân viên khác ${runId}`,
       completedAt,
       events: { create: { actorId: otherStaff.id, type: "COMPLETED", note: "Sự kiện riêng Task 2" } },
     },
   });
 
   try {
-    await page.goto("/login?callbackUrl=/staff");
-    await page.getByLabel("Email").fill("staff@demo.bhx");
-    await page.locator('input[type="password"]').fill("Demo@123");
-    await page.getByRole("button", { name: /Đăng nhập/i }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/staff");
+    await authenticateStaffApp(page, "staff@demo.bhx");
     await page.getByRole("button", { name: "Lịch sử" }).click();
     await expect(page.getByText("Sự kiện riêng Task 2")).toHaveCount(0);
 
     await page.context().clearCookies();
-    await page.goto("/login?callbackUrl=/staff");
-    await page.getByRole("button", { name: "Manager", exact: true }).click();
-    await expect(page.getByLabel("Email")).toHaveValue("manager@demo.bhx");
-    await page.locator('input[type="password"]').fill("Demo@123");
-    await page.getByRole("button", { name: /Đăng nhập/i }).click();
-    await expect(page).toHaveURL((url) => url.pathname === "/staff");
+    await authenticateStaffApp(page, "manager@demo.bhx");
     await page.getByRole("button", { name: "Nhiệm vụ" }).click();
     await page.getByRole("button", { name: "Hoàn thành" }).click();
 
