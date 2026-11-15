@@ -86,6 +86,32 @@ Test integration dùng PostgreSQL trong `DATABASE_URL`. Bộ test bao phủ POS 
 
 GitHub Actions chạy PostgreSQL service, migration, seed, lint, typecheck, unit/integration, production build và E2E.
 
+## Luồng demo xác nhận phản hồi
+
+### Giá FEFO trên kiosk
+
+1. Mở `/kiosk`, chọn cửa hàng và tìm sản phẩm có lô sắp hết hạn đang được giảm giá.
+2. Kiểm tra thẻ kết quả hiển thị cùng giá hiện tại, giá gốc gạch ngang và phần trăm giảm như màn hình chi tiết.
+3. Giá công khai lấy từ lô còn bán được có hạn dùng gần nhất; lô cách ly, hết hàng hoặc không còn hiệu lực không chi phối giá. Nếu không có lô giảm giá hợp lệ, kiosk dùng giá cơ sở của sản phẩm.
+
+### Quét ESL độc lập và QR demo
+
+1. Đăng nhập `/staff`, chọn **Quét ESL**, rồi dùng camera hoặc nhập mã ESL thủ công; thao tác này không cần mở một nhiệm vụ trước.
+2. ESL không có nhiệm vụ đang mở hiển thị `Không có nhiệm vụ đang mở`; một nhiệm vụ sẽ mở thẳng luồng xử lý hiện có; nhiều nhiệm vụ yêu cầu chọn nhiệm vụ cần mở.
+3. Sau khi API xác nhận ESL thuộc cửa hàng được phép truy cập, màn hình hiển thị QR demo để thiết bị thứ hai quét. Payload QR chỉ chứa mã ESL ổn định, không chứa giá hoặc tồn kho.
+4. Quét ESL chỉ tra cứu/mở nhiệm vụ, không tự động hoàn thành nhiệm vụ.
+
+### Hành vi Staff và Manager
+
+- **Staff** chỉ thấy nhiệm vụ chưa được nhận hoặc do chính mình nhận; lịch sử và số liệu không lộ nhiệm vụ riêng của Staff khác. Khi hai Staff cùng nhận một nhiệm vụ, chỉ một người trở thành người phụ trách.
+- **Manager** thấy toàn bộ nhiệm vụ của cửa hàng, gồm người phụ trách và thời điểm hoàn thành để giám sát. Giao diện Manager không cung cấp thao tác thực thi/hoàn thành nhiệm vụ thay Staff.
+
+### Cache/prefetch kiosk trong phiên
+
+- Di chuột, focus hoặc chạm vào thẻ sản phẩm sẽ prefetch chi tiết và sơ đồ; lần mở tiếp theo dùng lại request đang chạy hoặc dữ liệu đã tải trong tối đa 60 giây.
+- Cache chỉ là `Map` trong bộ nhớ của phiên kiosk hiện tại, được tách theo cửa hàng và bị xóa khi đổi cửa hàng hoặc phiên tự động reset. Request lỗi bị loại để lần thử lại có thể tải mới.
+- Demo không dùng Redis, cache chia sẻ, `localStorage`, IndexedDB, SWR hoặc React Query cho tối ưu này.
+
 ## Deploy Vercel + Neon
 
 1. Tạo Neon PostgreSQL và lấy pooled `DATABASE_URL`.
