@@ -536,14 +536,14 @@ test("ESL lookup uses the newest response and opens a task missing from stale po
     await input.fill(taskEsl.code);
     await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
     await expect.poll(() => olderLookupRequests).toBe(1);
+    const olderRequestAborted = page.waitForEvent("requestfailed", (request) => new URL(request.url()).pathname === `/api/esl/${taskEsl.code}`);
     await input.fill(emptyEsl.code);
     await input.press("Enter");
     await expect(page.getByText("Không có nhiệm vụ đang mở")).toBeVisible();
     await expect(page.locator(".esl-lookup-result")).toContainText(emptyEsl.code);
 
-    const olderResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/esl/${taskEsl.code}`);
     releaseOlderLookup();
-    await olderResponse;
+    expect((await olderRequestAborted).failure()?.errorText).toBe("net::ERR_ABORTED");
     await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toBeVisible();
     await expect(page.locator(".esl-lookup-result")).toContainText(emptyEsl.code);
     await expect(page.getByRole("heading", { name: freshTask.title })).toHaveCount(0);

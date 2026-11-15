@@ -1,7 +1,7 @@
 "use client";
 
 import { ScanLine, X } from "lucide-react";
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { EslQrDemo } from "@/components/esl-qr-demo";
 
@@ -41,16 +41,33 @@ export function EslScannerModal({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const lookupGeneration = useRef(0);
+  const lookupController = useRef<AbortController | null>(null);
+
+  const cancelLookup = useCallback(() => {
+    lookupGeneration.current += 1;
+    lookupController.current?.abort();
+    lookupController.current = null;
+  }, []);
+
+  useEffect(() => cancelLookup, [cancelLookup]);
+
+  function close() {
+    cancelLookup();
+    onClose();
+  }
 
   async function lookup(value = code) {
     const normalized = value.trim();
     if (!normalized) return;
     const generation = ++lookupGeneration.current;
+    lookupController.current?.abort();
+    const controller = new AbortController();
+    lookupController.current = controller;
     setLoading(true);
     setError("");
     setResult(null);
     try {
-      const response = await fetch(`/api/esl/${encodeURIComponent(normalized)}`, { cache: "no-store" });
+      const response = await fetch(`/api/esl/${encodeURIComponent(normalized)}`, { cache: "no-store", signal: controller.signal });
       if (!response.ok) throw new Error();
       const payload = await response.json() as EslLookupPayload;
       if (payload.esl.storeId !== storeId) throw new Error();
@@ -61,7 +78,10 @@ export function EslScannerModal({
     } catch {
       if (generation === lookupGeneration.current) setError("Mã ESL không tồn tại hoặc thuộc cửa hàng khác.");
     } finally {
-      if (generation === lookupGeneration.current) setLoading(false);
+      if (generation === lookupGeneration.current) {
+        lookupController.current = null;
+        setLoading(false);
+      }
     }
   }
 
@@ -71,9 +91,9 @@ export function EslScannerModal({
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
       <section className="modal esl-scanner-modal">
-        <button className="icon-button modal-close" onClick={onClose} aria-label="Đóng tra cứu ESL"><X /></button>
+        <button className="icon-button modal-close" onClick={close} aria-label="Đóng tra cứu ESL"><X /></button>
         <header className="modal-head"><span className="section-label">STANDALONE SCAN</span><h2>Tra cứu ESL</h2><p>Quét nhãn hoặc nhập mã thiết bị để xem nhiệm vụ đang mở.</p></header>
         <div className="modal-body">
           <BarcodeScanner label="Quét mã ESL" onDetected={(value) => { setCode(value); void lookup(value); }} />

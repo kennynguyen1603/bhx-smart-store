@@ -319,10 +319,18 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
     const task = await tx.task.findUnique({ where: { id: taskId }, include: { lot: true, product: true } });
     if (!task?.lot || !FEFO_TASKS.includes(task.type)) throw new ApiError(404, "Không tìm thấy nhiệm vụ FEFO", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
-    await claimStaffTaskForCompletion(tx, task.id, user, FEFO_COMPLETABLE_TASKS);
-    if (user.role !== Role.STAFF) {
-      assertTaskClaimable(task, user);
-      if (!FEFO_COMPLETABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+    const claimed = await tx.task.updateMany({
+      where: {
+        id: task.id,
+        status: { in: FEFO_COMPLETABLE_TASKS },
+        ...(user.role === Role.STAFF ? { OR: [{ assigneeId: null }, { assigneeId: user.id }] } : {}),
+      },
+      data: { status: TaskStatus.COMPLETED, assigneeId: user.id, completedAt: new Date() },
+    });
+    if (claimed.count !== 1) {
+      const current = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
+      assertTaskClaimable(current, user);
+      throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
     }
     let lot;
     if (task.type === TaskType.QUARANTINE) {
@@ -335,7 +343,7 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
       lot = await tx.lot.update({ where: { id: task.lot.id }, data: { status: LotStatus.MARKED_DOWN, markdownPercent: rule.discountPercent, markdownPriceVnd } });
       await tx.markdown.create({ data: { lotId: lot.id, discountPercent: rule.discountPercent, originalPriceVnd: task.product.basePriceVnd, markdownPriceVnd } });
     }
-    const updatedTask = await tx.task.update({ where: { id: task.id }, data: { status: TaskStatus.COMPLETED, assigneeId: user.id, completedAt: new Date(), note: task.type === TaskType.QUARANTINE ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });
+    const updatedTask = await tx.task.update({ where: { id: task.id }, data: { note: task.type === TaskType.QUARANTINE ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });
     await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: "COMPLETED", note: updatedTask.note } });
     await tx.eSL.updateMany({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId }, data: { ledOn: false } });
     await tx.auditLog.create({ data: { actorId: user.id, storeId: task.storeId, action: task.type === TaskType.QUARANTINE ? "LOT_QUARANTINE" : "FEFO_MARKDOWN", entityType: "Lot", entityId: lot.id, before: json(task.lot), after: json(lot) } });

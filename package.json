@@ -46,6 +46,7 @@
     "@types/web-push": "^3.6.4",
     "eslint": "^9.39.1",
     "eslint-config-next": "16.4.6",
+    "happy-dom": "^21.0.4",
     "prisma": "7.10.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
