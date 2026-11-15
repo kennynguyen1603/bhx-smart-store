@@ -556,6 +556,7 @@ test("ESL lookup uses the newest response and opens a task missing from stale po
 });
 
 test("mobile staff navbar keeps labels aligned when the task badge is visible", async ({ page }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/login?callbackUrl=/staff");
   await page.getByLabel("Email").fill("staff@demo.bhx");
@@ -577,6 +578,34 @@ test("mobile staff navbar keeps labels aligned when the task badge is visible", 
   });
   expect(layout.labelOffset).toBeLessThanOrEqual(1);
   expect(layout.badgeOverlapsLabel).toBe(false);
+
+  const tasksTab = page.getByRole("button", { name: "Nhiệm vụ" });
+  const scannerTab = page.getByRole("button", { name: "Quét ESL" });
+  await tasksTab.click();
+  await expect(tasksTab).toHaveClass(/active/);
+  await scannerTab.click();
+  await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toBeVisible();
+  await expect(scannerTab).toHaveClass(/active/);
+  await expect(tasksTab).not.toHaveClass(/active/);
+  await expect(page.getByRole("heading", { name: "Tất cả nhiệm vụ" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Đăng xuất" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Đóng tra cứu ESL" }).click();
+  await page.getByRole("button", { name: "Đăng xuất" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await page.goto("/login?callbackUrl=/staff");
+  await page.getByRole("button", { name: "Manager", exact: true }).click();
+  await page.locator('input[type="password"]').fill("Demo@123");
+  await page.getByRole("button", { name: /Đăng nhập/i }).click();
+  await expect(page).toHaveURL(/\/staff$/);
+  const managerTasksTab = page.getByRole("button", { name: "Nhiệm vụ" });
+  const managerScannerTab = page.getByRole("button", { name: "Quét ESL" });
+  await managerTasksTab.click();
+  await managerScannerTab.click();
+  await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toBeVisible();
+  await expect(managerScannerTab).toHaveClass(/active/);
+  await expect(managerTasksTab).not.toHaveClass(/active/);
+  await expect(page.getByRole("button", { name: "Đăng xuất" })).toBeVisible();
 });
 
 test("admin can sign in and open store operations", async ({ page }) => {
