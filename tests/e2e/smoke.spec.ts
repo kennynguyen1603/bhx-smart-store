@@ -94,6 +94,72 @@ test("product detail retry recovers after the first request fails", async ({ pag
   expect(detailRequests).toBe(2);
 });
 
+test("product detail cache ignores a stale search after switching stores", async ({ page }) => {
+  let releaseSearch!: () => void;
+  const searchGate = new Promise<void>((resolve) => { releaseSearch = resolve; });
+  let delayedSearches = 0;
+  await page.route("**/api/kiosk/products/search**", async (route) => {
+    delayedSearches += 1;
+    if (delayedSearches === 1) await searchGate;
+    await route.continue();
+  });
+
+  await page.goto("/kiosk");
+  const storeSelector = page.getByRole("combobox");
+  await expect(storeSelector).not.toHaveValue("");
+  const currentStore = await storeSelector.inputValue();
+  const otherStore = await storeSelector.locator("option").evaluateAll((options, current) => options.map((option) => (option as HTMLOptionElement).value).find((value) => value !== current), currentStore);
+  expect(otherStore).toBeTruthy();
+
+  await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await expect.poll(() => delayedSearches).toBe(1);
+  await storeSelector.selectOption(otherStore!);
+  await expect(page.locator(".kiosk-search .button.primary")).toBeEnabled();
+  const staleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/kiosk/products/search");
+  releaseSearch();
+  await staleResponse;
+
+  await expect(page.getByRole("heading", { name: /Bạn đang tìm/i })).toBeVisible();
+  await expect(page.locator(".product-card")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Tìm kiếm" })).toBeEnabled();
+});
+
+test("product detail cache ignores stale openExact search after automatic reset", async ({ page }) => {
+  await page.clock.install();
+  let releaseSearch!: () => void;
+  const searchGate = new Promise<void>((resolve) => { releaseSearch = resolve; });
+  let searchRequests = 0;
+  let detailRequests = 0;
+  await page.route("**/api/kiosk/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/kiosk/products/search") {
+      searchRequests += 1;
+      await searchGate;
+    } else if (/\/api\/kiosk\/products\/[^/]+$/.test(url.pathname) || /\/api\/kiosk\/stores\/[^/]+\/map$/.test(url.pathname)) {
+      detailRequests += 1;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/kiosk");
+  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await page.getByPlaceholder(/Tìm sữa/i).evaluate((input: HTMLInputElement) => input.blur());
+  await page.keyboard.type("8934588012345");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => searchRequests).toBe(1);
+  await page.clock.runFor(120_000);
+  const staleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/kiosk/products/search");
+  releaseSearch();
+  await staleResponse;
+  await page.clock.fastForward(1);
+
+  await expect(page.getByRole("heading", { name: /Bạn đang tìm/i })).toBeVisible();
+  await expect(page.locator(".product-card")).toHaveCount(0);
+  await expect(page.locator(".map-modal")).toHaveCount(0);
+  expect(detailRequests).toBe(0);
+});
+
 test("discounted FEFO price is consistent in kiosk list and detail", async ({ page, request }) => {
   nextEnv.loadEnvConfig(process.cwd());
   const { prisma } = await import("../../src/lib/db");

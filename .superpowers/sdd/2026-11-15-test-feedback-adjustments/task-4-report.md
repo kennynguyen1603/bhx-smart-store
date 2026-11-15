@@ -39,3 +39,10 @@ Review focus confirmed:
 - Store isolation and automatic-timeout invalidation follow the recorded ruling.
 - Close/back/manual Home retain cache.
 - Retry succeeds without refetching already-cached map data.
+
+## Fix Round 1
+
+- Controller evidence: `npm run test:e2e -- --grep "stale search|product detail cache|product detail retry"` ran 4 tests; 3 passed and `product detail cache ignores stale openExact search after automatic reset` failed at `tests/e2e/smoke.spec.ts:157` because the home heading was not visible after `page.clock.fastForward(120_000)`.
+- Root cause: Playwright `clock.fastForward` fires due timers at most once, while the kiosk automatic reset requires 120 one-second interval callbacks. Replaced it with `clock.runFor(120_000)`, which fires all time-related callbacks and triggers the real automatic reset while the delayed `openExact` search remains pending.
+- GREEN (isolated): `npm run test:e2e -- --grep "product detail cache ignores stale openExact search after automatic reset"` — PASS, 1/1.
+- GREEN (requested scope): `npm run test:e2e -- --grep "stale search|product detail cache|product detail retry"` — PASS, 4/4.

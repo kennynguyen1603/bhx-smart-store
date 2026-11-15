@@ -36,12 +36,14 @@ export function KioskApp() {
   const scannerBuffer = useRef("");
   const scannerTimer = useRef<number | null>(null);
   const detailRequest = useRef(0);
+  const searchRequest = useRef(0);
 
   const resetSession = useCallback(() => setSeconds(120), []);
   const closeDetail = useCallback(() => { detailRequest.current += 1; setSelectedProduct(null); setDetail(null); setDetailError(false); setDetailLoading(false); }, []);
   const home = useCallback((automatic = false) => {
     if (automatic) detailCache.clear();
-    setQuery(""); setProducts([]); setResults(false); closeDetail(); setSeconds(120);
+    searchRequest.current += 1;
+    setQuery(""); setProducts([]); setResults(false); setSearchLoading(false); closeDetail(); setSeconds(120);
   }, [closeDetail]);
   const loadDetail = useCallback(async (product: Product) => {
     const detailKey = `detail:${storeCode}:${product.id}`;
@@ -77,6 +79,7 @@ export function KioskApp() {
   }, [loadDetail, resetSession]);
   const search = useCallback(async (value = query, openExact = false, category?: string) => {
     if (!storeCode) return;
+    const request = ++searchRequest.current;
     setSearchLoading(true);
     resetSession();
     const params = new URLSearchParams({ storeCode });
@@ -84,6 +87,7 @@ export function KioskApp() {
     if (category) params.set("category", category);
     const response = await fetch(`/api/kiosk/products/search?${params}`);
     const result = await response.json();
+    if (request !== searchRequest.current) return;
     setProducts(result.products || []);
     setResults(true);
     setSearchLoading(false);
