@@ -1,7 +1,7 @@
 "use client";
 
 import { ScanLine, X } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { EslQrDemo } from "@/components/esl-qr-demo";
 
@@ -29,23 +29,23 @@ type EslLookupPayload = {
 
 export function EslScannerModal({
   storeId,
-  tasks,
   onSelectTask,
   onClose,
 }: {
   storeId: string;
-  tasks: TaskSummary[];
-  onSelectTask(taskId: string): void;
+  onSelectTask(task: TaskSummary): void;
   onClose(): void;
 }) {
   const [code, setCode] = useState("");
   const [result, setResult] = useState<EslLookupPayload | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const lookupGeneration = useRef(0);
 
   async function lookup(value = code) {
     const normalized = value.trim();
     if (!normalized) return;
+    const generation = ++lookupGeneration.current;
     setLoading(true);
     setError("");
     setResult(null);
@@ -54,13 +54,14 @@ export function EslScannerModal({
       if (!response.ok) throw new Error();
       const payload = await response.json() as EslLookupPayload;
       if (payload.esl.storeId !== storeId) throw new Error();
+      if (generation !== lookupGeneration.current) return;
       setCode(payload.esl.code);
       setResult(payload);
-      if (payload.tasks.length === 1) onSelectTask(payload.tasks[0].id);
+      if (payload.tasks.length === 1) onSelectTask(payload.tasks[0]);
     } catch {
-      setError("Mã ESL không tồn tại hoặc thuộc cửa hàng khác.");
+      if (generation === lookupGeneration.current) setError("Mã ESL không tồn tại hoặc thuộc cửa hàng khác.");
     } finally {
-      setLoading(false);
+      if (generation === lookupGeneration.current) setLoading(false);
     }
   }
 
@@ -68,8 +69,6 @@ export function EslScannerModal({
     event.preventDefault();
     void lookup();
   }
-
-  const knownTaskIds = new Set(tasks.map((task) => task.id));
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -80,13 +79,13 @@ export function EslScannerModal({
           <BarcodeScanner label="Quét mã ESL" onDetected={(value) => { setCode(value); void lookup(value); }} />
           <form className="manual-scan esl-lookup-form" onSubmit={submit}>
             <input className="form-control" value={code} onChange={(event) => setCode(event.target.value)} placeholder="Ví dụ: ESL-NT-Q5-L-02" aria-label="Mã ESL tra cứu" />
-            <button className="button primary" disabled={loading || !code.trim()}><ScanLine />{loading ? "Đang tra cứu" : "Tra cứu"}</button>
+            <button className="button primary" disabled={!code.trim()}><ScanLine />{loading ? "Đang tra cứu" : "Tra cứu"}</button>
           </form>
           {error && <div className="alert-box danger">{error}</div>}
           {result && <div className="esl-lookup-result">
             <div className="product-summary"><span>🏷️</span><span><small>{result.esl.shelf.label}</small><strong>{result.esl.product.name}</strong><small>{result.esl.code}</small></span></div>
             {result.tasks.length === 0 && <div className="empty-state">Không có nhiệm vụ đang mở</div>}
-            {result.tasks.length > 1 && <section className="esl-task-choices"><h3>Chọn nhiệm vụ cần mở</h3>{result.tasks.map((task) => <button className="task-row" key={task.id} onClick={() => onSelectTask(task.id)} disabled={!knownTaskIds.has(task.id)}><span className="task-copy"><strong>{task.title}</strong><span>{task.type} · {task.status}</span></span></button>)}</section>}
+            {result.tasks.length > 1 && <section className="esl-task-choices"><h3>Chọn nhiệm vụ cần mở</h3>{result.tasks.map((task) => <button className="task-row" key={task.id} onClick={() => onSelectTask(task)}><span className="task-copy"><strong>{task.title}</strong><span>{task.type} · {task.status}</span></span></button>)}</section>}
             <EslQrDemo code={result.esl.code} />
           </div>}
         </div>

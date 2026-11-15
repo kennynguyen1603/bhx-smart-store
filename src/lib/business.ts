@@ -26,6 +26,27 @@ function json(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+async function claimStaffTaskForCompletion(
+  tx: Prisma.TransactionClient,
+  taskId: string,
+  user: { id: string; role: Role },
+  allowedStatuses: TaskStatus[],
+) {
+  if (user.role !== Role.STAFF) return;
+  const claimed = await tx.task.updateMany({
+    where: {
+      id: taskId,
+      status: { in: allowedStatuses },
+      OR: [{ assigneeId: null }, { assigneeId: user.id }],
+    },
+    data: { assigneeId: user.id },
+  });
+  if (claimed.count === 1) return;
+  const current = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
+  assertTaskClaimable(current, user);
+  throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+}
+
 async function createTaskNotifications(
   tx: Prisma.TransactionClient,
   task: { id: string; storeId: string; title: string; note: string | null; type: TaskType },
@@ -177,8 +198,6 @@ export async function startTask(taskId: string, user: { id: string; role: Role; 
     const task = await tx.task.findUnique({ where: { id: taskId } });
     if (!task) throw new ApiError(404, "Không tìm thấy nhiệm vụ", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
-    assertTaskClaimable(task, user);
-    if (!STARTABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ không thể bắt đầu", "INVALID_TASK_STATE");
     const startedAt = new Date();
     if (user.role === Role.STAFF) {
       const claimed = await tx.task.updateMany({
@@ -195,6 +214,8 @@ export async function startTask(taskId: string, user: { id: string; role: Role; 
         throw new ApiError(409, "Nhiệm vụ không thể bắt đầu", "INVALID_TASK_STATE");
       }
     } else {
+      assertTaskClaimable(task, user);
+      if (!STARTABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ không thể bắt đầu", "INVALID_TASK_STATE");
       await tx.task.update({ where: { id: taskId }, data: { status: TaskStatus.IN_PROGRESS, assigneeId: user.id, startedAt } });
     }
     const updated = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
@@ -216,8 +237,11 @@ export async function completeRestock(
     const task = await tx.task.findUnique({ where: { id: taskId } });
     if (!task || task.type !== TaskType.RESTOCK) throw new ApiError(404, "Không tìm thấy nhiệm vụ bổ sung", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
-    assertTaskClaimable(task, user);
-    if (!RESTOCKABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+    await claimStaffTaskForCompletion(tx, task.id, user, RESTOCKABLE_TASKS);
+    if (user.role !== Role.STAFF) {
+      assertTaskClaimable(task, user);
+      if (!RESTOCKABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+    }
     const inventory = await tx.inventory.findUniqueOrThrow({ where: { storeId_shelfId_productId: { storeId: task.storeId, shelfId: task.shelfId, productId: task.productId } } });
     if (inventory.version !== input.expectedVersion) {
       throw new ApiError(409, "Tồn kệ vừa được người khác cập nhật. Hãy kiểm đếm lại.", "VERSION_CONFLICT", { currentVersion: inventory.version, onShelf: inventory.onShelf, backroom: inventory.backroom });
@@ -228,7 +252,15 @@ export async function completeRestock(
     const afterBackroom = inventory.backroom - movable;
     const blocked = afterShelf <= inventory.lowThreshold;
     const nextStatus = blocked ? TaskStatus.BLOCKED : TaskStatus.COMPLETED;
-    const updatedInventory = await tx.inventory.update({ where: { id: inventory.id }, data: { onShelf: afterShelf, backroom: afterBackroom, version: { increment: 1 } } });
+    const inventoryUpdate = await tx.inventory.updateMany({
+      where: { id: inventory.id, version: input.expectedVersion },
+      data: { onShelf: afterShelf, backroom: afterBackroom, version: { increment: 1 } },
+    });
+    if (inventoryUpdate.count !== 1) {
+      const current = await tx.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
+      throw new ApiError(409, "Tồn kệ vừa được người khác cập nhật. Hãy kiểm đếm lại.", "VERSION_CONFLICT", { currentVersion: current.version, onShelf: current.onShelf, backroom: current.backroom });
+    }
+    const updatedInventory = await tx.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
     const updatedTask = await tx.task.update({ where: { id: task.id }, data: { status: nextStatus, assigneeId: user.id, completedAt: blocked ? null : new Date(), note: blocked ? `Đã bổ sung ${movable}, nhưng tồn kệ vẫn dưới ngưỡng` : `Đã bổ sung ${movable} sản phẩm` } });
     await tx.stockMovement.create({ data: { inventoryId: inventory.id, taskId: task.id, actorId: user.id, clientMutationId: input.clientMutationId, type: MovementType.RESTOCK, deltaShelf: movable, deltaBackroom: -movable, beforeShelf: inventory.onShelf, afterShelf, note: updatedTask.note } });
     await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: blocked ? "BLOCKED" : "COMPLETED", note: updatedTask.note } });
@@ -287,8 +319,11 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
     const task = await tx.task.findUnique({ where: { id: taskId }, include: { lot: true, product: true } });
     if (!task?.lot || !FEFO_TASKS.includes(task.type)) throw new ApiError(404, "Không tìm thấy nhiệm vụ FEFO", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
-    assertTaskClaimable(task, user);
-    if (!FEFO_COMPLETABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+    await claimStaffTaskForCompletion(tx, task.id, user, FEFO_COMPLETABLE_TASKS);
+    if (user.role !== Role.STAFF) {
+      assertTaskClaimable(task, user);
+      if (!FEFO_COMPLETABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+    }
     let lot;
     if (task.type === TaskType.QUARANTINE) {
       lot = await tx.lot.update({ where: { id: task.lot.id }, data: { status: LotStatus.QUARANTINED } });

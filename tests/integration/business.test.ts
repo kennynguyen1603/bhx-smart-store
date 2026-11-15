@@ -13,6 +13,20 @@ const EVENT_PREFIX = "integration-test-";
 
 let fixture: { storeId: string; productId: string; shelfId: string; inventoryId: string; userId: string; supplierId: string };
 
+async function getCompetingStaff() {
+  return Promise.all(STAFF_EMAILS.map((email, index) => prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: {
+      email,
+      name: `Integration Staff ${index + 1}`,
+      passwordHash: "not-used",
+      role: Role.STAFF,
+      userStores: { create: { storeId: fixture.storeId, isDefault: true } },
+    },
+  })));
+}
+
 async function cleanupFixture() {
   await prisma.integrationEvent.deleteMany({ where: { externalEventId: { startsWith: EVENT_PREFIX } } });
   await prisma.user.deleteMany({ where: { email: { in: [USER_EMAIL, ...STAFF_EMAILS] } } });
@@ -54,15 +68,7 @@ afterAll(cleanupFixture);
 
 describe("POS and RESTOCK business flow", () => {
   it("atomically allows exactly one Staff member to claim a task", async () => {
-    const [firstStaff, secondStaff] = await Promise.all(STAFF_EMAILS.map((email, index) => prisma.user.create({
-      data: {
-        email,
-        name: `Integration Staff ${index + 1}`,
-        passwordHash: "not-used",
-        role: Role.STAFF,
-        userStores: { create: { storeId: fixture.storeId, isDefault: true } },
-      },
-    })));
+    const [firstStaff, secondStaff] = await getCompetingStaff();
     const task = await prisma.task.create({
       data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, status: TaskStatus.OPEN, title: "Competing claim test" },
     });
@@ -77,6 +83,65 @@ describe("POS and RESTOCK business flow", () => {
     expect(rejected?.reason).toMatchObject({ status: 409, code: "TASK_ALREADY_ASSIGNED" } satisfies Partial<ApiError>);
     const ownerId = (await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).assigneeId;
     expect(ownerId).toBe(results[0].status === "fulfilled" ? firstStaff.id : secondStaff.id);
+  });
+
+  it("allows only one competing Staff completion to apply a restock", async () => {
+    const [firstStaff, secondStaff] = await getCompetingStaff();
+    const inventory = await prisma.inventory.update({
+      where: { id: fixture.inventoryId },
+      data: { onShelf: 1, backroom: 8, version: 10 },
+    });
+    const task = await prisma.task.create({
+      data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, status: TaskStatus.OPEN, title: "Competing restock completion" },
+    });
+    const users = [firstStaff, secondStaff].map((staff) => ({ id: staff.id, role: Role.STAFF, storeIds: [fixture.storeId] }));
+
+    const results = await Promise.allSettled(users.map((user) => completeRestock(task.id, user, {
+      quantity: 5,
+      expectedVersion: inventory.version,
+      clientMutationId: randomUUID(),
+    })));
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ status: 409, code: "TASK_ALREADY_ASSIGNED" } satisfies Partial<ApiError>);
+    const winnerIndex = results.findIndex((result) => result.status === "fulfilled");
+    const savedTask = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(savedTask).toMatchObject({ status: TaskStatus.COMPLETED, assigneeId: users[winnerIndex].id });
+    expect(await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).toMatchObject({ onShelf: 6, backroom: 3, version: 11 });
+    expect(await prisma.stockMovement.count({ where: { taskId: task.id } })).toBe(1);
+  });
+
+  it("serializes competing Staff start and restock completion claims", async () => {
+    const [firstStaff, secondStaff] = await getCompetingStaff();
+    const inventory = await prisma.inventory.update({
+      where: { id: fixture.inventoryId },
+      data: { onShelf: 1, backroom: 8, version: 20 },
+    });
+    const task = await prisma.task.create({
+      data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, status: TaskStatus.OPEN, title: "Start versus completion" },
+    });
+    const starter = { id: firstStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] };
+    const completer = { id: secondStaff.id, role: Role.STAFF, storeIds: [fixture.storeId] };
+
+    const results = await Promise.allSettled([
+      startTask(task.id, starter, randomUUID()),
+      completeRestock(task.id, completer, { quantity: 5, expectedVersion: inventory.version, clientMutationId: randomUUID() }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ status: 409, code: "TASK_ALREADY_ASSIGNED" } satisfies Partial<ApiError>);
+    const savedTask = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    const savedInventory = await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } });
+    if (results[0].status === "fulfilled") {
+      expect(savedTask).toMatchObject({ status: TaskStatus.IN_PROGRESS, assigneeId: firstStaff.id });
+      expect(savedInventory).toMatchObject({ onShelf: 1, backroom: 8, version: 20 });
+    } else {
+      expect(savedTask).toMatchObject({ status: TaskStatus.COMPLETED, assigneeId: secondStaff.id });
+      expect(savedInventory).toMatchObject({ onShelf: 6, backroom: 3, version: 21 });
+    }
+    expect(await prisma.stockMovement.count({ where: { taskId: task.id } })).toBe(results[1].status === "fulfilled" ? 1 : 0);
   });
 
   it("processes a POS event once, floors stock at zero, creates one task and turns on the ESL", async () => {
@@ -120,9 +185,55 @@ describe("POS and RESTOCK business flow", () => {
     await expect(completeRestock(task.id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, { quantity: 1, expectedVersion: inventory.version, clientMutationId: randomUUID() }))
       .rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" } satisfies Partial<ApiError>);
   });
+
+  it("uses inventory version CAS so concurrent restocks cannot both apply", async () => {
+    const inventory = await prisma.inventory.update({
+      where: { id: fixture.inventoryId },
+      data: { onShelf: 1, backroom: 8, version: 30 },
+    });
+    const tasks = await Promise.all(["first", "second"].map((suffix) => prisma.task.create({
+      data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, status: TaskStatus.OPEN, title: `CAS restock ${suffix}` },
+    })));
+    const user = { id: fixture.userId, role: Role.ADMIN, storeIds: [] };
+
+    const results = await Promise.allSettled(tasks.map((task) => completeRestock(task.id, user, {
+      quantity: 5,
+      expectedVersion: inventory.version,
+      clientMutationId: randomUUID(),
+    })));
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ status: 409, code: "VERSION_CONFLICT" } satisfies Partial<ApiError>);
+    expect(await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).toMatchObject({ onShelf: 6, backroom: 3, version: 31 });
+    expect(await prisma.stockMovement.count({ where: { taskId: { in: tasks.map((task) => task.id) } } })).toBe(1);
+  });
 });
 
 describe("FEFO engine", () => {
+  it("allows only one competing Staff completion to apply FEFO side effects", async () => {
+    const [firstStaff, secondStaff] = await getCompetingStaff();
+    const expiryDate = new Date();
+    expiryDate.setUTCDate(expiryDate.getUTCDate() + 1);
+    const lot = await prisma.lot.create({
+      data: { storeId: fixture.storeId, productId: fixture.productId, supplierId: fixture.supplierId, batchCode: `FEFO-RACE-${randomUUID()}`, origin: "Việt Nam", receivedAt: new Date(), expiryDate, quantity: 4 },
+    });
+    const task = await prisma.task.create({
+      data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, lotId: lot.id, type: TaskType.FEFO, status: TaskStatus.OPEN, title: "Competing FEFO completion" },
+    });
+    const users = [firstStaff, secondStaff].map((staff) => ({ id: staff.id, role: Role.STAFF, storeIds: [fixture.storeId] }));
+
+    const results = await Promise.allSettled(users.map((user) => completeFefoTask(task.id, user, randomUUID())));
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ status: 409, code: "TASK_ALREADY_ASSIGNED" } satisfies Partial<ApiError>);
+    const winnerIndex = results.findIndex((result) => result.status === "fulfilled");
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: TaskStatus.COMPLETED, assigneeId: users[winnerIndex].id });
+    expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "MARKED_DOWN", markdownPercent: 30, markdownPriceVnd: 7_000 });
+    expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(1);
+  });
+
   it("is idempotent and creates a quarantine task instead of a markdown for an expired lot", async () => {
     const lot = await prisma.lot.create({ data: { storeId: fixture.storeId, productId: fixture.productId, supplierId: fixture.supplierId, batchCode: "EXPIRED-01", origin: "Việt Nam", receivedAt: new Date("2026-11-01T00:00:00Z"), expiryDate: new Date("2026-11-12T00:00:00Z"), quantity: 4 } });
     const now = new Date("2026-11-13T08:00:00Z");
