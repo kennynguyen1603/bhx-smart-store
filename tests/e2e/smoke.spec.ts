@@ -277,29 +277,46 @@ test("ESL scanner handles zero, one, many, and inaccessible store results", asyn
 
     const input = page.getByRole("textbox", { name: "Mã ESL tra cứu" });
     await input.fill(esls[0].code);
-    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
     await expect(page.getByText("Không có nhiệm vụ đang mở")).toBeVisible();
-    await expect(page.getByRole("img", { name: `QR cho ${esls[0].code}` })).toBeVisible();
-    await expect(page.getByText(esls[0].code, { exact: true })).toBeVisible();
+    const qrImage = page.getByRole("img", { name: `QR cho ${esls[0].code}` });
+    await expect(qrImage).toBeVisible();
+    await page.addScriptTag({ path: "node_modules/@zxing/browser/umd/zxing-browser.min.js" });
+    const decodedEslCode = await qrImage.evaluate(async (image) => {
+      const zxing = (window as typeof window & {
+        ZXingBrowser: {
+          BrowserQRCodeReader: new () => {
+            decodeFromImageElement(element: HTMLImageElement): Promise<{ getText(): string }>;
+          };
+        };
+      }).ZXingBrowser;
+      const result = await new zxing.BrowserQRCodeReader().decodeFromImageElement(image as HTMLImageElement);
+      return result.getText();
+    });
+    expect(decodedEslCode).toBe(esls[0].code);
+    await expect(
+      page.getByRole("region", { name: "Nhãn QR ESL" }).getByText(esls[0].code, { exact: true }),
+    ).toBeVisible();
 
     await input.fill(esls[1].code);
-    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
     await expect(page.getByRole("heading", { name: oneTask.title })).toBeVisible();
     await page.getByRole("button", { name: "Để sau" }).click();
 
     await page.getByRole("button", { name: "Quét ESL" }).click();
     await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill(esls[2].code);
-    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
     await expect(page.getByText("Chọn nhiệm vụ cần mở")).toBeVisible();
-    await expect(page.getByRole("button", { name: new RegExp(manyTasks[0].title) })).toBeVisible();
-    await expect(page.getByRole("button", { name: new RegExp(manyTasks[1].title) })).toBeVisible();
-    await page.getByRole("button", { name: new RegExp(manyTasks[0].title) }).click();
+    const taskChoices = page.locator(".esl-task-choices");
+    await expect(taskChoices.getByRole("button", { name: new RegExp(manyTasks[0].title) })).toBeVisible();
+    await expect(taskChoices.getByRole("button", { name: new RegExp(manyTasks[1].title) })).toBeVisible();
+    await taskChoices.getByRole("button", { name: new RegExp(manyTasks[0].title) }).click();
     await expect(page.getByRole("heading", { name: manyTasks[0].title })).toBeVisible();
     await page.getByRole("button", { name: "Để sau" }).click();
 
     await page.getByRole("button", { name: "Quét ESL" }).click();
     await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill("ESL-LVV-TD-T-01");
-    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
     await expect(page.getByText("Mã ESL không tồn tại hoặc thuộc cửa hàng khác.")).toBeVisible();
     await expect(page.locator(".esl-qr-demo")).toHaveCount(0);
   } finally {
