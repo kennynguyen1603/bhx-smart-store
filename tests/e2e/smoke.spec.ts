@@ -31,6 +31,69 @@ test("customer kiosk can search and open a product route", async ({ page }) => {
   await expect(page.getByText("TRUY XUẤT NGUỒN GỐC")).toBeVisible();
 });
 
+test("product detail cache opens immediately, reuses requests, and isolates stores", async ({ page }) => {
+  let detailRequests = 0;
+  let mapRequests = 0;
+  await page.route("**/api/kiosk/**", async (route) => {
+    const url = new URL(route.request().url());
+    const isDetail = url.pathname !== "/api/kiosk/products/search" && /\/api\/kiosk\/products\/[^/]+$/.test(url.pathname);
+    const isMap = /\/api\/kiosk\/stores\/[^/]+\/map$/.test(url.pathname);
+    if (isDetail) detailRequests += 1;
+    if (isMap) mapRequests += 1;
+    if ((isDetail || isMap) && detailRequests + mapRequests <= 2) await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
+
+  await page.goto("/kiosk");
+  await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  const card = page.locator(".product-card").filter({ hasText: "Sữa tươi Vinamilk 100% 1L" });
+  await card.click();
+
+  await expect(page.locator(".product-detail-info").getByRole("heading", { name: "Sữa tươi Vinamilk 100% 1L" })).toBeVisible();
+  await expect(page.getByLabel("Đang tải chỉ đường và truy xuất nguồn gốc")).toBeVisible();
+  await expect(page.getByText("Đang đồng bộ dữ liệu cửa hàng…")).toHaveCount(0);
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  expect({ detailRequests, mapRequests }).toEqual({ detailRequests: 1, mapRequests: 1 });
+
+  await page.getByRole("button", { name: "Đóng chi tiết" }).click();
+  await card.click();
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  expect({ detailRequests, mapRequests }).toEqual({ detailRequests: 1, mapRequests: 1 });
+
+  await page.getByRole("button", { name: "Đóng chi tiết" }).click();
+  const storeSelector = page.getByRole("combobox");
+  const currentStore = await storeSelector.inputValue();
+  const otherStore = await storeSelector.locator("option").evaluateAll((options, current) => options.map((option) => (option as HTMLOptionElement).value).find((value) => value !== current), currentStore);
+  expect(otherStore).toBeTruthy();
+  await storeSelector.selectOption(otherStore!);
+  await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await page.locator(".product-card").filter({ hasText: "Sữa tươi Vinamilk 100% 1L" }).click();
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  expect({ detailRequests, mapRequests }).toEqual({ detailRequests: 2, mapRequests: 2 });
+});
+
+test("product detail retry recovers after the first request fails", async ({ page }) => {
+  let detailRequests = 0;
+  await page.route("**/api/kiosk/products/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/kiosk/products/search" || !/\/api\/kiosk\/products\/[^/]+$/.test(url.pathname)) return route.continue();
+    detailRequests += 1;
+    if (detailRequests === 1) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporary" }) });
+    return route.continue();
+  });
+
+  await page.goto("/kiosk");
+  await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await page.locator(".product-card").filter({ hasText: "Sữa tươi Vinamilk 100% 1L" }).click();
+  await expect(page.locator(".detail-error")).toContainText("Chưa tải được chỉ đường");
+  await page.getByRole("button", { name: "Thử lại" }).click();
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  expect(detailRequests).toBe(2);
+});
+
 test("discounted FEFO price is consistent in kiosk list and detail", async ({ page, request }) => {
   nextEnv.loadEnvConfig(process.cwd());
   const { prisma } = await import("../../src/lib/db");
