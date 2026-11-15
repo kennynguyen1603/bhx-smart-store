@@ -226,6 +226,90 @@ test("Staff history is private while Manager completed tasks show oversight deta
   }
 });
 
+test("ESL scanner handles zero, one, many, and inaccessible store results", async ({ page }) => {
+  test.setTimeout(120_000);
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const staff = await prisma.user.findUniqueOrThrow({ where: { email: "staff@demo.bhx" } });
+  const esls = await Promise.all([
+    prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-NT-Q5-T-01" } }),
+    prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-NT-Q5-T-03" } }),
+    prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-NT-Q5-T-05" } }),
+  ]);
+  const affectedTasks = await prisma.task.findMany({
+    where: { OR: esls.map((esl) => ({ storeId: esl.storeId, shelfId: esl.shelfId, productId: esl.productId })) },
+    select: { id: true, status: true, assigneeId: true, completedAt: true },
+  });
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const createdTaskIds: string[] = [];
+
+  try {
+    await prisma.task.updateMany({
+      where: { id: { in: affectedTasks.map((task) => task.id) } },
+      data: { status: "COMPLETED", completedAt: new Date() },
+    });
+    const oneTask = await prisma.task.create({
+      data: {
+        storeId: esls[1].storeId,
+        shelfId: esls[1].shelfId,
+        productId: esls[1].productId,
+        assigneeId: staff.id,
+        type: "RESTOCK",
+        status: "OPEN",
+        title: `ESL single task ${runId}`,
+      },
+    });
+    const manyTasks = await Promise.all(["RESTOCK", "FEFO"].map((type, index) => prisma.task.create({
+      data: {
+        storeId: esls[2].storeId,
+        shelfId: esls[2].shelfId,
+        productId: esls[2].productId,
+        type: type as "RESTOCK" | "FEFO",
+        status: index === 0 ? "OPEN" : "BLOCKED",
+        title: `ESL choice ${index + 1} ${runId}`,
+      },
+    })));
+    createdTaskIds.push(oneTask.id, ...manyTasks.map((task) => task.id));
+
+    await authenticateStaffApp(page, "staff@demo.bhx");
+    await page.getByRole("button", { name: "Quét ESL" }).click();
+    await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toBeVisible();
+
+    const input = page.getByRole("textbox", { name: "Mã ESL tra cứu" });
+    await input.fill(esls[0].code);
+    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await expect(page.getByText("Không có nhiệm vụ đang mở")).toBeVisible();
+    await expect(page.getByRole("img", { name: `QR cho ${esls[0].code}` })).toBeVisible();
+    await expect(page.getByText(esls[0].code, { exact: true })).toBeVisible();
+
+    await input.fill(esls[1].code);
+    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await expect(page.getByRole("heading", { name: oneTask.title })).toBeVisible();
+    await page.getByRole("button", { name: "Để sau" }).click();
+
+    await page.getByRole("button", { name: "Quét ESL" }).click();
+    await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill(esls[2].code);
+    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await expect(page.getByText("Chọn nhiệm vụ cần mở")).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(manyTasks[0].title) })).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(manyTasks[1].title) })).toBeVisible();
+    await page.getByRole("button", { name: new RegExp(manyTasks[0].title) }).click();
+    await expect(page.getByRole("heading", { name: manyTasks[0].title })).toBeVisible();
+    await page.getByRole("button", { name: "Để sau" }).click();
+
+    await page.getByRole("button", { name: "Quét ESL" }).click();
+    await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill("ESL-LVV-TD-T-01");
+    await page.getByRole("button", { name: "Tra cứu" }).click();
+    await expect(page.getByText("Mã ESL không tồn tại hoặc thuộc cửa hàng khác.")).toBeVisible();
+    await expect(page.locator(".esl-qr-demo")).toHaveCount(0);
+  } finally {
+    await prisma.task.deleteMany({ where: { id: { in: createdTaskIds } } });
+    for (const { id, ...data } of affectedTasks) {
+      await prisma.task.update({ where: { id }, data });
+    }
+  }
+});
+
 test("mobile staff navbar keeps labels aligned when the task badge is visible", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/login?callbackUrl=/staff");
