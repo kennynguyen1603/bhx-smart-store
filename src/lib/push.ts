@@ -1,6 +1,8 @@
 import * as webpush from "web-push";
 import { prisma } from "@/lib/db";
 
+export type PushPayload = { title: string; body: string; url?: string; tag?: string };
+export type PushDeliveryResult = { sent: number; skipped: boolean };
 let configured = false;
 
 function configureWebPush() {
@@ -15,17 +17,14 @@ function configureWebPush() {
   return true;
 }
 
-export async function sendPushToStore(
-  storeId: string,
-  payload: { title: string; body: string; url?: string; tag?: string },
-) {
-  if (!configureWebPush()) return { sent: 0, skipped: true };
-  const subscriptions = await prisma.pushSubscription.findMany({
-    where: { user: { active: true, userStores: { some: { storeId } } } },
-  });
-  let sent = 0;
-  await Promise.all(
-    subscriptions.map(async (subscription) => {
+export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<PushDeliveryResult> {
+  try {
+    if (!userIds.length || !configureWebPush()) return { sent: 0, skipped: true };
+    const subscriptions = await prisma.pushSubscription.findMany({
+      where: { userId: { in: [...new Set(userIds)] }, user: { active: true } },
+    });
+    let sent = 0;
+    await Promise.all(subscriptions.map(async (subscription) => {
       try {
         await webpush.sendNotification(
           { endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } },
@@ -40,7 +39,21 @@ export async function sendPushToStore(
           console.error("Push delivery failed", error);
         }
       }
-    }),
-  );
-  return { sent, skipped: false };
+    }));
+    return { sent, skipped: false };
+  } catch (error) {
+    console.error("Push delivery failed", error);
+    return { sent: 0, skipped: true };
+  }
+}
+
+export async function sendPushToStore(storeId: string, payload: PushPayload): Promise<PushDeliveryResult> {
+  try {
+    if (!configureWebPush()) return { sent: 0, skipped: true };
+    const recipients = await prisma.userStore.findMany({ where: { storeId, user: { active: true } }, select: { userId: true } });
+    return await sendPushToUsers(recipients.map(({ userId }) => userId), payload);
+  } catch (error) {
+    console.error("Push delivery failed", error);
+    return { sent: 0, skipped: true };
+  }
 }

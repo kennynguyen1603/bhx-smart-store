@@ -3,7 +3,6 @@ import {
   IntegrationType,
   LotStatus,
   MovementType,
-  NotificationType,
   Prisma,
   Role,
   TaskPriority,
@@ -13,9 +12,10 @@ import {
 import { ApiError } from "@/lib/api-auth";
 import type { SaleEventInput, SupplierLotInput, WmsInventoryInput } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
-import { sendPushToStore } from "@/lib/push";
+import { sendPushToStore, sendPushToUsers } from "@/lib/push";
 import { daysUntilStoreDate } from "@/lib/store-calendar";
 import { assertTaskClaimable } from "@/lib/task-access";
+import { createAssignmentNotifications, createOutcomeNotifications } from "@/lib/task-notifications";
 
 const ACTIVE_TASKS: TaskStatus[] = [TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED];
 const STARTABLE_TASKS: TaskStatus[] = [TaskStatus.OPEN, TaskStatus.BLOCKED];
@@ -46,27 +46,6 @@ async function claimStaffTaskForCompletion(
   const current = await tx.task.findUniqueOrThrow({ where: { id: taskId } });
   assertTaskClaimable(current, user);
   throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
-}
-
-async function createTaskNotifications(
-  tx: Prisma.TransactionClient,
-  task: { id: string; storeId: string; title: string; note: string | null; type: TaskType },
-) {
-  const recipients = await tx.userStore.findMany({
-    where: { storeId: task.storeId, user: { active: true, role: { in: [Role.STAFF, Role.MANAGER] } } },
-    select: { userId: true },
-  });
-  if (!recipients.length) return;
-  await tx.notification.createMany({
-    data: recipients.map(({ userId }) => ({
-      userId,
-      storeId: task.storeId,
-      taskId: task.id,
-      type: task.type === TaskType.RESTOCK ? NotificationType.TASK_CREATED : NotificationType.FEFO_DUE,
-      title: task.title,
-      body: task.note || "Bạn có một nhiệm vụ mới cần xử lý",
-    })),
-  });
 }
 
 async function existingIntegration(externalEventId: string) {
@@ -125,7 +104,7 @@ export async function processSaleEvent(input: SaleEventInput) {
           },
         });
         taskCreated = true;
-        await createTaskNotifications(tx, task);
+        await createAssignmentNotifications(tx, task);
       } else if (priority === TaskPriority.HIGH && task.priority !== TaskPriority.HIGH) {
         task = await tx.task.update({ where: { id: task.id }, data: { priority, note: `Tồn kệ tiếp tục giảm, còn ${afterShelf}/${inventory.capacity}` } });
       }
@@ -234,7 +213,7 @@ export async function completeRestock(
 ) {
   const receipt = await prisma.mutationReceipt.findUnique({ where: { clientMutationId: input.clientMutationId } });
   if (receipt) return receipt.response as object;
-  return prisma.$transaction(async (tx) => {
+  const outcome = await prisma.$transaction(async (tx) => {
     const task = await tx.task.findUnique({ where: { id: taskId } });
     if (!task || task.type !== TaskType.RESTOCK) throw new ApiError(404, "Không tìm thấy nhiệm vụ bổ sung", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
@@ -266,15 +245,23 @@ export async function completeRestock(
     await tx.stockMovement.create({ data: { inventoryId: inventory.id, taskId: task.id, actorId: user.id, clientMutationId: input.clientMutationId, type: MovementType.RESTOCK, deltaShelf: movable, deltaBackroom: -movable, beforeShelf: inventory.onShelf, afterShelf, note: updatedTask.note } });
     await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: blocked ? "BLOCKED" : "COMPLETED", note: updatedTask.note } });
     await tx.eSL.updateMany({ where: { storeId: task.storeId, shelfId: task.shelfId, productId: task.productId }, data: { ledOn: blocked } });
-    if (blocked) {
-      const managers = await tx.userStore.findMany({ where: { storeId: task.storeId, user: { role: { in: [Role.MANAGER, Role.ADMIN] }, active: true } }, select: { userId: true } });
-      await tx.notification.createMany({ data: managers.map(({ userId }) => ({ userId, storeId: task.storeId, taskId: task.id, type: NotificationType.TASK_BLOCKED, title: "Nhiệm vụ bị chặn", body: updatedTask.note || "Tồn kho sau không đủ" })) });
-    }
+    const recipients = await createOutcomeNotifications(tx, updatedTask, blocked ? "BLOCKED" : "COMPLETED");
     await tx.auditLog.create({ data: { actorId: user.id, storeId: task.storeId, action: "RESTOCK", entityType: "Inventory", entityId: inventory.id, before: json({ onShelf: inventory.onShelf, backroom: inventory.backroom, version: inventory.version }), after: json({ onShelf: afterShelf, backroom: afterBackroom, version: updatedInventory.version }) } });
     const response = { task: { id: updatedTask.id, status: updatedTask.status, note: updatedTask.note }, inventory: { id: updatedInventory.id, onShelf: updatedInventory.onShelf, backroom: updatedInventory.backroom, version: updatedInventory.version } };
     await tx.mutationReceipt.create({ data: { clientMutationId: input.clientMutationId, userId: user.id, action: "RESTOCK", response: json(response) } });
-    return response;
+    return { response, recipients, task: updatedTask };
   });
+  await sendOutcomePush(outcome.recipients, outcome.task);
+  return outcome.response;
+}
+
+async function sendOutcomePush(recipients: string[], task: { id: string; title: string; note: string | null; status: TaskStatus }) {
+  await sendPushToUsers(recipients, {
+    title: task.status === TaskStatus.BLOCKED ? "Nhiệm vụ bị chặn" : "Nhiệm vụ hoàn thành",
+    body: `${task.title} · ${task.note || "Đã cập nhật nhiệm vụ"}`,
+    url: `/admin?task=${task.id}`,
+    tag: task.id,
+  }).catch((error) => console.error("Task outcome push failed", error));
 }
 
 function daysRemaining(expiryDate: Date, now = new Date()) {
@@ -305,7 +292,7 @@ export async function runFefoEngine(now = new Date()) {
       if (!inventory) continue;
       const task = await prisma.$transaction(async (tx) => {
         const saved = await tx.task.create({ data: { storeId: store.id, productId: lot.productId, shelfId: inventory.shelfId, lotId: lot.id, type, status: TaskStatus.OPEN, priority: days <= 1 ? TaskPriority.HIGH : TaskPriority.MEDIUM, title: type === TaskType.QUARANTINE ? `Cách ly ${lot.product.name}` : `Dán nhãn FEFO ${lot.product.name}`, note: type === TaskType.QUARANTINE ? `Lô ${lot.batchCode} đã hết hạn` : `Lô ${lot.batchCode} còn ${days} ngày · Giảm ${rule.discountPercent}%`, dueAt: now } });
-        await createTaskNotifications(tx, saved);
+        await createAssignmentNotifications(tx, saved);
         await tx.eSL.updateMany({ where: { storeId: store.id, productId: lot.productId, shelfId: inventory.shelfId }, data: { ledOn: true } });
         return saved;
       });
@@ -319,7 +306,7 @@ export async function runFefoEngine(now = new Date()) {
 export async function completeFefoTask(taskId: string, user: { id: string; role: Role; storeIds: string[] }, clientMutationId: string) {
   const receipt = await prisma.mutationReceipt.findUnique({ where: { clientMutationId } });
   if (receipt) return receipt.response as object;
-  return prisma.$transaction(async (tx) => {
+  const outcome = await prisma.$transaction(async (tx) => {
     const task = await tx.task.findUnique({ where: { id: taskId }, include: { lot: true, product: true, store: { select: { timeZone: true } } } });
     if (!task?.lot || !FEFO_TASKS.includes(task.type)) throw new ApiError(404, "Không tìm thấy nhiệm vụ FEFO", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
@@ -378,11 +365,14 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
     const updatedTask = await tx.task.update({ where: { id: task.id }, data: { note: quarantine ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });
     await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: "COMPLETED", note: updatedTask.note } });
     await tx.eSL.updateMany({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId }, data: { ledOn: false } });
+    const recipients = await createOutcomeNotifications(tx, updatedTask, "COMPLETED");
     await tx.auditLog.create({ data: { actorId: user.id, storeId: task.storeId, action: quarantine ? "LOT_QUARANTINE" : "FEFO_MARKDOWN", entityType: "Lot", entityId: lot.id, before: json(task.lot), after: json(lot) } });
     const response = { task: { id: updatedTask.id, status: updatedTask.status, note: updatedTask.note }, lot: { id: lot.id, status: lot.status, markdownPercent: lot.markdownPercent, markdownPriceVnd: lot.markdownPriceVnd } };
     await tx.mutationReceipt.create({ data: { clientMutationId, userId: user.id, action: "FEFO_COMPLETE", response: json(response) } });
-    return response;
+    return { response, recipients, task: updatedTask };
   });
+  await sendOutcomePush(outcome.recipients, outcome.task);
+  return outcome.response;
 }
 
 export { daysRemaining };

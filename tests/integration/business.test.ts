@@ -5,10 +5,14 @@ import { completeFefoTask, completeRestock, processSaleEvent, runFefoEngine, sta
 import { prisma } from "@/lib/db";
 import { Prisma, Role, TaskPriority, TaskStatus, TaskType } from "@/generated/prisma/client";
 
+const outcomePush = vi.hoisted(() => ({ send: vi.fn().mockResolvedValue({ sent: 0, skipped: true }) }));
+vi.mock("@/lib/push", async (importOriginal) => ({ ...await importOriginal<typeof import("@/lib/push")>(), sendPushToUsers: outcomePush.send }));
+
 const STORE_CODE = "TST-INT";
 const PRODUCT_SKU = "TST-SKU";
 const USER_EMAIL = "integration@demo.bhx";
 const STAFF_EMAILS = ["integration-staff-1@demo.bhx", "integration-staff-2@demo.bhx"];
+const OUTCOME_EMAILS = ["integration-manager@demo.bhx", "integration-inactive@demo.bhx", "integration-outsider@demo.bhx"];
 const EVENT_PREFIX = "integration-test-";
 
 let fixture: { storeId: string; productId: string; shelfId: string; inventoryId: string; userId: string; supplierId: string };
@@ -29,7 +33,7 @@ async function getCompetingStaff() {
 
 async function cleanupFixture() {
   await prisma.integrationEvent.deleteMany({ where: { externalEventId: { startsWith: EVENT_PREFIX } } });
-  await prisma.user.deleteMany({ where: { email: { in: [USER_EMAIL, ...STAFF_EMAILS] } } });
+  await prisma.user.deleteMany({ where: { email: { in: [USER_EMAIL, ...STAFF_EMAILS, ...OUTCOME_EMAILS] } } });
   await prisma.store.deleteMany({ where: { code: STORE_CODE } });
   await prisma.product.deleteMany({ where: { sku: PRODUCT_SKU } });
   await prisma.supplier.deleteMany({ where: { code: "TST-SUP" } });
@@ -44,6 +48,10 @@ beforeAll(async () => {
   const inventory = await prisma.inventory.create({ data: { storeId: store.id, shelfId: shelf.id, productId: product.id, onShelf: 6, backroom: 10, capacity: 10, lowThreshold: 3 } });
   await prisma.eSL.create({ data: { code: "ESL-TST-01", storeId: store.id, shelfId: shelf.id, productId: product.id } });
   const user = await prisma.user.create({ data: { email: USER_EMAIL, name: "Integration Admin", passwordHash: "not-used", role: Role.ADMIN, userStores: { create: { storeId: store.id, isDefault: true } } } });
+  await Promise.all(OUTCOME_EMAILS.map((email, i) => prisma.user.create({ data: {
+    email, name: `Outcome ${i}`, passwordHash: "unused", role: Role.MANAGER, active: i !== 1,
+    ...(i !== 2 ? { userStores: { create: { storeId: store.id } } } : {}),
+  } })));
   await prisma.fefoRule.createMany({ data: [
     { storeId: store.id, daysRemaining: 0, discountPercent: 0, quarantine: true },
     { storeId: store.id, daysRemaining: 1, discountPercent: 30 },
@@ -53,6 +61,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  outcomePush.send.mockReset().mockResolvedValue({ sent: 0, skipped: true });
   await prisma.integrationEvent.deleteMany({ where: { externalEventId: { startsWith: EVENT_PREFIX } } });
   await prisma.saleEvent.deleteMany({ where: { storeId: fixture.storeId } });
   await prisma.task.deleteMany({ where: { storeId: fixture.storeId } });
@@ -460,6 +469,8 @@ describe("FEFO engine", () => {
       await expect(completeFefoTask(winningTask.id, user, mutationIds[winnerIndex])).resolves.toEqual((results[winnerIndex] as PromiseFulfilledResult<unknown>).value);
       await expect(completeFefoTask(winningTask.id, user, randomUUID())).rejects.toMatchObject({ status: 409, code: "INVALID_TASK_STATE" });
       expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(1);
+      expect(await prisma.notification.count({ where: { taskId: { in: tasks.map((candidate) => candidate.id) }, type: "TASK_COMPLETED" } })).toBe(1);
+      expect(outcomePush.send).toHaveBeenCalledTimes(1);
     } finally {
       transaction.mockRestore();
     }
@@ -505,5 +516,42 @@ describe("FEFO engine", () => {
     await completeFefoTask(tasks[0].id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, randomUUID());
     expect((await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).status).toBe("QUARANTINED");
     expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
+  });
+});
+
+
+describe("transactional task outcomes", () => {
+  it.each([{ quantity: 1, outcome: "BLOCKED" }, { quantity: 5, outcome: "COMPLETED" }])("notifies active store oversight once for $outcome and survives push failure", async ({ quantity, outcome }) => {
+    const [staff] = await getCompetingStaff();
+    const manager = await prisma.user.findUniqueOrThrow({ where: { email: OUTCOME_EMAILS[0] } });
+    const inventory = await prisma.inventory.update({ where: { id: fixture.inventoryId }, data: { onShelf: 1, backroom: 8, version: 70 } });
+    const task = await prisma.task.create({ data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, title: "Outcome test" } });
+    const mutation = { quantity, expectedVersion: inventory.version, clientMutationId: randomUUID() };
+    let committed: unknown;
+    outcomePush.send.mockImplementationOnce(async (ids, payload) => {
+      committed = { ids: [...ids].sort(), url: payload.url, status: (await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status, notifications: await prisma.notification.count({ where: { taskId: task.id } }) };
+      throw new Error("controlled outcome push failure");
+    });
+    const user = { id: staff.id, role: Role.STAFF, storeIds: [fixture.storeId] };
+    const first = await completeRestock(task.id, user, mutation);
+    expect(committed).toEqual({ ids: [fixture.userId, manager.id].sort(), url: `/admin?task=${task.id}`, status: outcome, notifications: 2 });
+    expect(await completeRestock(task.id, user, mutation)).toEqual(first);
+    const notifications = await prisma.notification.findMany({ where: { taskId: task.id } });
+    expect(notifications).toHaveLength(2);
+    expect(notifications.every((n) => n.type === `TASK_${outcome}`)).toBe(true);
+    expect(outcomePush.send).toHaveBeenCalledTimes(1);
+  });
+  it("excludes the completing actor from FEFO outcomes and never repeats on receipt replay or terminal retry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
+    const { task } = await createFefoFixture("2026-11-17");
+    const user = { id: fixture.userId, role: Role.ADMIN, storeIds: [] };
+    const mutationId = randomUUID();
+    await completeFefoTask(task.id, user, mutationId);
+    await completeFefoTask(task.id, user, mutationId);
+    await expect(completeFefoTask(task.id, user, randomUUID())).rejects.toMatchObject({ code: "INVALID_TASK_STATE" });
+    const manager = await prisma.user.findUniqueOrThrow({ where: { email: OUTCOME_EMAILS[0] } });
+    expect(await prisma.notification.findMany({ where: { taskId: task.id } })).toMatchObject([{ userId: manager.id, type: "TASK_COMPLETED" }]);
+    expect(outcomePush.send).toHaveBeenCalledTimes(1);
   });
 });
