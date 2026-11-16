@@ -100,8 +100,8 @@ describe("local service-worker hosts", () => {
   });
 });
 
-function loadWorker(hostname: string) {
-  const listeners: Record<string, (event: { waitUntil: (promise: Promise<unknown>) => void; request?: unknown; respondWith?: unknown }) => void> = {};
+function loadWorker(hostname: string, windows: unknown[] = []) {
+  const listeners: Record<string, (event: { waitUntil: (promise: Promise<unknown>) => void; request?: unknown; respondWith?: unknown; notification?: unknown }) => void> = {};
   const cache = { addAll: vi.fn().mockResolvedValue(undefined) };
   const caches = {
     open: vi.fn().mockResolvedValue(cache),
@@ -112,9 +112,9 @@ function loadWorker(hostname: string) {
     location: { hostname, origin: `https://${hostname}` },
     addEventListener: (name: string, listener: typeof listeners[string]) => { listeners[name] = listener; },
     skipWaiting: vi.fn().mockResolvedValue(undefined),
-    clients: { claim: vi.fn().mockResolvedValue(undefined) },
+    clients: { claim: vi.fn().mockResolvedValue(undefined), matchAll: vi.fn().mockResolvedValue(windows), openWindow: vi.fn().mockResolvedValue(undefined) },
   };
-  runInNewContext(readFileSync(new URL("../../public/sw.js", import.meta.url), "utf8"), { self, caches, URL, fetch: () => new Promise(() => {}) });
+  runInNewContext(readFileSync(new URL("../../public/sw.js", import.meta.url), "utf8"), { self, clients: self.clients, caches, URL, fetch: () => new Promise(() => {}) });
   return { listeners, caches, cache, self };
 }
 
@@ -154,4 +154,14 @@ describe("worker caching", () => {
     worker.listeners.fetch({ waitUntil: vi.fn(), request: { method: "GET", url: "https://store.example/staff", mode: "navigate" }, respondWith });
     expect(respondWith).toHaveBeenCalledOnce();
   });
+});
+
+it.each(["https://store.example/admin?storeId=old&task=old", "https://store.example/admin?storeId=other&task=task-2"])("navigates an existing window at %s to select the complete push destination before focusing", async currentUrl => {
+  const client = { url: currentUrl, navigate: vi.fn().mockResolvedValue(undefined), focus: vi.fn().mockResolvedValue(undefined) };
+  const worker = loadWorker("store.example", [client]);
+  let pending!: Promise<unknown>;
+  worker.listeners.notificationclick({ waitUntil: promise => { pending = promise; }, notification: { close: vi.fn(), data: { url: "/admin?storeId=other&task=task-2" } } });
+  await pending;
+  expect(client.navigate).toHaveBeenCalledExactlyOnceWith("https://store.example/admin?storeId=other&task=task-2");
+  expect(client.focus).toHaveBeenCalledOnce(); expect(worker.self.clients.openWindow).not.toHaveBeenCalled();
 });

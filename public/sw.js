@@ -34,7 +34,14 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => { const url = event.notification.data?.url || "/staff"; const existing = windows.find((client) => new URL(client.url).pathname === new URL(url, self.location.origin).pathname); return existing ? existing.focus() : clients.openWindow(url); }));
+  event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
+    const requested = new URL(event.notification.data?.url || "/staff", self.location.origin);
+    const url = requested.origin === self.location.origin ? requested : new URL("/staff", self.location.origin);
+    const existing = windows.find((client) => new URL(client.url).origin === url.origin && new URL(client.url).pathname === url.pathname);
+    if (!existing) return clients.openWindow(url.href);
+    await existing.navigate(url.href);
+    return existing.focus();
+  }));
 });
 
 function openDb() {

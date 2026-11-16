@@ -79,6 +79,26 @@ afterEach(() => vi.useRealTimers());
 afterAll(cleanupFixture);
 
 describe("POS and RESTOCK business flow", () => {
+  it.each(["start", "restock", "fefo"])("forbids Manager %s without stealing an assignment or changing durable state", async (command) => {
+    const [staff] = await getCompetingStaff();
+    const manager = await prisma.user.findUniqueOrThrow({ where: { email: OUTCOME_EMAILS[0] } });
+    const { lot, task: unassigned } = await createFefoFixture("2026-11-17");
+    const task = await prisma.task.update({ where: { id: unassigned.id }, data: { type: command === "fefo" ? "FEFO" : "RESTOCK", assigneeId: staff.id } });
+    const inventory = await prisma.inventory.findUniqueOrThrow({ where: { id: fixture.inventoryId } });
+    const mutationId = randomUUID();
+    const user = { id: manager.id, role: Role.MANAGER, storeIds: [fixture.storeId] };
+    const execute = () => command === "start" ? startTask(task.id, user, mutationId) : command === "fefo" ? completeFefoTask(task.id, user, mutationId) : completeRestock(task.id, user, { quantity: 1, expectedVersion: inventory.version, clientMutationId: mutationId });
+    await expect(execute()).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
+    expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toEqual(lot);
+    expect(await prisma.inventory.findUniqueOrThrow({ where: { id: inventory.id } })).toEqual(inventory);
+    expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(0);
+    expect(await prisma.notification.count({ where: { taskId: task.id } })).toBe(0);
+    expect(await prisma.stockMovement.count({ where: { taskId: task.id } })).toBe(0);
+    expect(await prisma.mutationReceipt.count({ where: { clientMutationId: mutationId } })).toBe(0);
+    expect(outcomePush.send).not.toHaveBeenCalled();
+  });
+
   it("atomically allows exactly one Staff member to claim a task", async () => {
     const [firstStaff, secondStaff] = await getCompetingStaff();
     const task = await prisma.task.create({
@@ -168,7 +188,18 @@ describe("POS and RESTOCK business flow", () => {
     expect(duplicate.duplicate).toBe(true);
     expect(await prisma.saleEvent.count({ where: { externalEventId } })).toBe(1);
     expect(await prisma.task.count({ where: { storeId: fixture.storeId, type: TaskType.RESTOCK, status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED] } } })).toBe(1);
+    expect(await prisma.taskEvent.count({ where: { task: { storeId: fixture.storeId }, type: "CREATED" } })).toBe(1);
     expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(true);
+  });
+
+  it("records priority escalation transactionally so an older POS commit changes the event cardinality", async () => {
+    const input = { externalEventId: `${EVENT_PREFIX}${randomUUID()}`, storeCode: STORE_CODE, productSku: PRODUCT_SKU, shelfCode: "T-01", quantity: 4, priceVnd: 10_000, occurredAt: new Date() };
+    await processSaleEvent(input);
+    const task = await prisma.task.findFirstOrThrow({ where: { storeId: fixture.storeId } });
+    expect(task.priority).toBe("MEDIUM");
+    await processSaleEvent({ ...input, externalEventId: `${EVENT_PREFIX}${randomUUID()}`, quantity: 2 });
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ priority: "HIGH" });
+    expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(2);
   });
 
   it("updates shelf, backroom, task, LED, movement and audit atomically", async () => {
@@ -511,6 +542,7 @@ describe("FEFO engine", () => {
     const tasks = await prisma.task.findMany({ where: { lotId: lot.id } });
     expect(tasks).toHaveLength(1);
     expect(tasks[0].type).toBe(TaskType.QUARANTINE);
+    expect(await prisma.taskEvent.count({ where: { taskId: tasks[0].id, type: "CREATED" } })).toBe(1);
     expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
 
     await completeFefoTask(tasks[0].id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, randomUUID());
@@ -534,7 +566,7 @@ describe("transactional task outcomes", () => {
     });
     const user = { id: staff.id, role: Role.STAFF, storeIds: [fixture.storeId] };
     const first = await completeRestock(task.id, user, mutation);
-    expect(committed).toEqual({ ids: [fixture.userId, manager.id].sort(), url: `/admin?task=${task.id}`, status: outcome, notifications: 2 });
+    expect(committed).toEqual({ ids: [fixture.userId, manager.id].sort(), url: `/admin?storeId=${fixture.storeId}&task=${task.id}`, status: outcome, notifications: 2 });
     expect(await completeRestock(task.id, user, mutation)).toEqual(first);
     const notifications = await prisma.notification.findMany({ where: { taskId: task.id } });
     expect(notifications).toHaveLength(2);

@@ -57,7 +57,7 @@ describe("Admin task command", () => {
     expect(task).toMatchObject({ status: "OPEN", type: "RESTOCK", priority: "HIGH", lotId: null, note: "Test note", dueAt: "2030-01-02T03:00:00.000Z", product: { name: "main" }, shelf: { label: "Kệ test" }, assignee: { name: "User 2" } });
     expect(await prisma.taskEvent.findMany({ where: { taskId: task.id } })).toMatchObject([{ type: "CREATED", actorId: auth.session!.user.id }]);
     expect((await prisma.notification.findMany({ where: { taskId: task.id } })).map((n) => n.userId)).toEqual([users[2].id]);
-    expect(delivery.send).toHaveBeenCalledWith([users[2].id], expect.objectContaining({ url: `/staff?task=${task.id}`, tag: task.id }));
+    expect(delivery.send).toHaveBeenCalledWith([users[2].id], expect.objectContaining({ url: `/staff?storeId=${storeId}&task=${task.id}`, tag: task.id }));
   });
   it.each(["STAFF", "foreign Manager", "anonymous"])("rejects %s without side effects", async (kind) => {
     if (kind === "anonymous") auth.session = null;

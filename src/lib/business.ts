@@ -27,6 +27,12 @@ function json(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+function ensureTaskExecution(user: { role: Role }) {
+  if (user.role !== Role.STAFF && user.role !== Role.ADMIN) {
+    throw new ApiError(403, "Bạn không có quyền thực hiện thao tác này", "FORBIDDEN");
+  }
+}
+
 async function claimStaffTaskForCompletion(
   tx: Prisma.TransactionClient,
   taskId: string,
@@ -104,9 +110,11 @@ export async function processSaleEvent(input: SaleEventInput) {
           },
         });
         taskCreated = true;
+        await tx.taskEvent.create({ data: { taskId: task.id, type: "CREATED" } });
         await createAssignmentNotifications(tx, task);
       } else if (priority === TaskPriority.HIGH && task.priority !== TaskPriority.HIGH) {
         task = await tx.task.update({ where: { id: task.id }, data: { priority, note: `Tồn kệ tiếp tục giảm, còn ${afterShelf}/${inventory.capacity}` } });
+        await tx.taskEvent.create({ data: { taskId: task.id, type: "UPDATED", note: task.note } });
       }
       await tx.eSL.updateMany({ where: { storeId: store.id, shelfId: shelf.id, productId: product.id }, data: { ledOn: true } });
       if (taskCreated && task) push = { storeId: store.id, taskId: task.id, title: "Kệ hàng sắp hết", body: `${product.name} · ${shelf.label}` };
@@ -121,7 +129,7 @@ export async function processSaleEvent(input: SaleEventInput) {
     await sendPushToStore(outcome.push.storeId, {
       title: outcome.push.title,
       body: outcome.push.body,
-      url: `/staff?task=${outcome.push.taskId}`,
+      url: `/staff?storeId=${outcome.push.storeId}&task=${outcome.push.taskId}`,
       tag: outcome.push.taskId,
     });
   }
@@ -172,6 +180,7 @@ export async function processSupplierLot(input: SupplierLotInput) {
 }
 
 export async function startTask(taskId: string, user: { id: string; role: Role; storeIds: string[] }, clientMutationId: string) {
+  ensureTaskExecution(user);
   const receipt = await prisma.mutationReceipt.findUnique({ where: { clientMutationId } });
   if (receipt) return receipt.response as object;
   return prisma.$transaction(async (tx) => {
@@ -211,6 +220,7 @@ export async function completeRestock(
   user: { id: string; role: Role; storeIds: string[] },
   input: { quantity: number; expectedVersion: number; clientMutationId: string },
 ) {
+  ensureTaskExecution(user);
   const receipt = await prisma.mutationReceipt.findUnique({ where: { clientMutationId: input.clientMutationId } });
   if (receipt) return receipt.response as object;
   const outcome = await prisma.$transaction(async (tx) => {
@@ -255,11 +265,11 @@ export async function completeRestock(
   return outcome.response;
 }
 
-async function sendOutcomePush(recipients: string[], task: { id: string; title: string; note: string | null; status: TaskStatus }) {
+async function sendOutcomePush(recipients: string[], task: { id: string; storeId: string; title: string; note: string | null; status: TaskStatus }) {
   await sendPushToUsers(recipients, {
     title: task.status === TaskStatus.BLOCKED ? "Nhiệm vụ bị chặn" : "Nhiệm vụ hoàn thành",
     body: `${task.title} · ${task.note || "Đã cập nhật nhiệm vụ"}`,
-    url: `/admin?task=${task.id}`,
+    url: `/admin?storeId=${task.storeId}&task=${task.id}`,
     tag: task.id,
   }).catch((error) => console.error("Task outcome push failed", error));
 }
@@ -292,18 +302,20 @@ export async function runFefoEngine(now = new Date()) {
       if (!inventory) continue;
       const task = await prisma.$transaction(async (tx) => {
         const saved = await tx.task.create({ data: { storeId: store.id, productId: lot.productId, shelfId: inventory.shelfId, lotId: lot.id, type, status: TaskStatus.OPEN, priority: days <= 1 ? TaskPriority.HIGH : TaskPriority.MEDIUM, title: type === TaskType.QUARANTINE ? `Cách ly ${lot.product.name}` : `Dán nhãn FEFO ${lot.product.name}`, note: type === TaskType.QUARANTINE ? `Lô ${lot.batchCode} đã hết hạn` : `Lô ${lot.batchCode} còn ${days} ngày · Giảm ${rule.discountPercent}%`, dueAt: now } });
+        await tx.taskEvent.create({ data: { taskId: saved.id, type: "CREATED" } });
         await createAssignmentNotifications(tx, saved);
         await tx.eSL.updateMany({ where: { storeId: store.id, productId: lot.productId, shelfId: inventory.shelfId }, data: { ledOn: true } });
         return saved;
       });
       created += 1;
-      await sendPushToStore(store.id, { title: task.title, body: task.note || "Nhiệm vụ FEFO mới", url: `/staff?task=${task.id}`, tag: task.id });
+      await sendPushToStore(store.id, { title: task.title, body: task.note || "Nhiệm vụ FEFO mới", url: `/staff?storeId=${store.id}&task=${task.id}`, tag: task.id });
     }
   }
   return { created, ranAt: now.toISOString() };
 }
 
 export async function completeFefoTask(taskId: string, user: { id: string; role: Role; storeIds: string[] }, clientMutationId: string) {
+  ensureTaskExecution(user);
   const receipt = await prisma.mutationReceipt.findUnique({ where: { clientMutationId } });
   if (receipt) return receipt.response as object;
   const outcome = await prisma.$transaction(async (tx) => {

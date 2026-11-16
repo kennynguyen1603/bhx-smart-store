@@ -53,6 +53,19 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("deliberate staff task interaction", () => {
+  it.each(["STAFF", "MANAGER"] as const)("%s task destination selects details without a mutation", async role => {
+    await act(async () => root.render(<StaffApp user={{ ...user, role }} initialStoreId="store-1" initialTaskId="task-1" />));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(container.querySelector(".staff-task-modal h2")?.textContent).toBe("Bổ sung sữa");
+    expect(writes).toEqual([]); expect(enqueueMutation).not.toHaveBeenCalled();
+    if (role === "MANAGER") expect(container.querySelector(".staff-task-modal")?.textContent).not.toContain("Bắt đầu");
+  });
+  it("does not select a task absent from the authorized feed", async () => {
+    await act(async () => root.render(<StaffApp user={user} initialTaskId="someone-elses-task" />));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    expect(container.querySelector(".staff-task-modal")).toBeNull(); expect(writes).toEqual([]);
+  });
   it.each(["OPEN", "BLOCKED"] as const)("opening %s is local inspection; explicit start sends once and updates only after success", async (status) => {
     tasks[0].status = status;
     let resolve!: (response: Response) => void;

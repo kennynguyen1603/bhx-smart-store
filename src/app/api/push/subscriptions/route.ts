@@ -3,12 +3,19 @@ import { apiErrorResponse, requireUser } from "@/lib/api-auth";
 import { pushSubscriptionSchema } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
 
-export async function GET() {
+export async function GET(request?: Request) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || null;
     const configured = Boolean(publicKey && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT);
-    return Response.json({ configured, publicKey });
+    const endpoint = request && new URL(request.url).searchParams.get("endpoint");
+    if (endpoint !== null && endpoint !== undefined) {
+      const subscription = await prisma.pushSubscription.findFirst({
+        where: { userId: user.id, endpoint: z.string().url().parse(endpoint) }, select: { id: true },
+      });
+      return Response.json({ configured, publicKey, registered: Boolean(subscription) }, { headers: { "Cache-Control": "private, no-store" } });
+    }
+    return Response.json({ configured, publicKey }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return apiErrorResponse(error);
   }

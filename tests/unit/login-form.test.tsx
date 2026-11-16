@@ -47,6 +47,15 @@ it("uses the successful sign-in response URL", async () => {
   expect(window.location.pathname + window.location.search).toBe("/staff?welcome=1");
 });
 
+it.each([[0, "/staff"], [1, "/admin"], [2, "/admin"]] as const)("retains a task push destination for demo account %s through login", async (index, path) => {
+  const destination = `${path}?storeId=other&task=task-2`;
+  params.set("callbackUrl", destination);
+  await act(async () => container.querySelectorAll<HTMLButtonElement>(".account-chips button")[index].click());
+  await act(async () => container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  expect(signIn.mock.calls[0][1]).toMatchObject({ callbackUrl: destination });
+  expect(window.location.pathname + window.location.search).toBe(destination);
+});
+
 it.each([undefined, "/staff?view=history"])("keeps manual-email fallback or explicit callback %s", async (callback) => {
   if (callback) params.set("callbackUrl", callback);
   const input = container.querySelector<HTMLInputElement>('input[type="email"]')!;

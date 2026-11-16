@@ -30,9 +30,9 @@ type Payload = { stores: StoreOption[]; selectedStoreId: string; tasks: Task[]; 
 function uuid() { return crypto.randomUUID(); }
 function time(value: string) { return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 
-export function StaffApp({ user }: { user: Session["user"] }) {
+export function StaffApp({ user, initialStoreId, initialTaskId }: { user: Session["user"]; initialStoreId?: string; initialTaskId?: string }) {
   const [data, setData] = useState<Payload | null>(null);
-  const [storeId, setStoreId] = useState(user.defaultStoreId || "");
+  const [storeId, setStoreId] = useState(initialStoreId || user.defaultStoreId || "");
   const [tab, setTab] = useState<"overview" | "tasks" | "history" | "scanner">("overview");
   const [filter, setFilter] = useState("ACTIVE");
   const [selected, setSelected] = useState<Task | null>(null);
@@ -53,6 +53,25 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const activeLoadRef = useRef<{ controller: AbortController; promise: Promise<boolean>; followup?: Promise<boolean> } | null>(null);
   const queueSyncRef = useRef<Promise<void> | null>(null);
   const managerOversight = user.role === "MANAGER";
+  const destinationOpenedRef = useRef(false);
+
+  const openTask = useCallback((task: Task) => {
+    setSelected(task);
+    setScanned(false);
+    setScanCode(task.shelf.esls[0]?.code || "");
+    setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1));
+  }, []);
+  useEffect(() => {
+    if (destinationOpenedRef.current || data?.selectedStoreId !== storeId) return;
+    const task = data?.tasks.find(task => task.id === initialTaskId);
+    if (!task) return;
+    const timer = window.setTimeout(() => {
+      destinationOpenedRef.current = true;
+      setTab("tasks");
+      openTask(task);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [data, storeId, initialTaskId, openTask]);
 
   const mergeConfirmedReads = useCallback((payload: Payload): Payload => {
     const confirmed = confirmedReadsRef.current.get(payload.selectedStoreId);
@@ -248,13 +267,6 @@ export function StaffApp({ user }: { user: Session["user"] }) {
       readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
       readPendingRef.current = null;
     }
-  }
-
-  function openTask(task: Task) {
-    setSelected(task);
-    setScanned(false);
-    setScanCode(task.shelf.esls[0]?.code || "");
-    setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1));
   }
 
   async function startSelectedTask(): Promise<void> {

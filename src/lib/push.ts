@@ -17,7 +17,7 @@ function configureWebPush() {
   return true;
 }
 
-export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<PushDeliveryResult> {
+async function deliverPushToUsers(userIds: string[], payload: PushPayload): Promise<PushDeliveryResult> {
   try {
     if (!userIds.length || !configureWebPush()) return { sent: 0, skipped: true };
     const subscriptions = await prisma.pushSubscription.findMany({
@@ -29,6 +29,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
         await webpush.sendNotification(
           { endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } },
           JSON.stringify(payload),
+          { timeout: 3_000 },
         );
         sent += 1;
       } catch (error) {
@@ -44,6 +45,22 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   } catch (error) {
     console.error("Push delivery failed", error);
     return { sent: 0, skipped: true };
+  }
+}
+
+export async function sendPushToUsers(userIds: string[], payload: PushPayload): Promise<PushDeliveryResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // Bound the whole best-effort operation as well as the provider socket.
+    // A stalled provider/cleanup must never hold a committed command response.
+    return await Promise.race([
+      deliverPushToUsers(userIds, payload),
+      new Promise<PushDeliveryResult>(resolve => {
+        timer = setTimeout(() => resolve({ sent: 0, skipped: true }), 3_500);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

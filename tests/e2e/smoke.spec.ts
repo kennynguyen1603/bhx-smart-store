@@ -1594,7 +1594,10 @@ test("push toggle disables once, retries cleanup, and keeps in-app notifications
     Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { getRegistration: async () => ({ pushManager: { getSubscription: async () => subscription } }) } });
   });
   let deletes = 0;
-  await page.route("**/api/push/subscriptions", async route => {
+  await page.route("**/api/push/subscriptions**", async route => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({ json: { configured: true, registered: true } }); return;
+    }
     expect(route.request().method()).toBe("DELETE");
     expect(route.request().postDataJSON()).toEqual({ endpoint: "https://push.example/toggle" });
     deletes++; await route.fulfill({ status: deletes === 1 ? 503 : 204 });
@@ -1609,6 +1612,79 @@ test("push toggle disables once, retries cleanup, and keeps in-app notifications
   expect(deletes).toBe(2);
   expect(await page.evaluate(() => (window as typeof window & { pushToggleCounters: { unsubscribe: number } }).pushToggleCounters.unsubscribe)).toBe(1);
   await expect(dialog.getByRole("button", { name: "Đánh dấu tất cả đã đọc", exact: true })).toBeVisible();
+});
+
+test("push failed registration stays retry-enable after reopen, reload, and account switch", async ({ page }) => {
+  await page.addInitScript(() => {
+    const subscription = { endpoint: "https://push.example/failed-setup", toJSON: () => ({ endpoint: "https://push.example/failed-setup", keys: { p256dh: "key", auth: "auth" } }) };
+    Object.defineProperty(window, "Notification", { configurable: true, value: { permission: "granted" } });
+    Object.defineProperty(window, "PushManager", { configurable: true, value: function PushManager() {} });
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { getRegistration: async () => ({
+      active: { state: "activated", scriptURL: new URL("/sw.js", location.href).href }, pushManager: { getSubscription: async () => subscription },
+    }) } });
+  });
+  let posts = 0, succeed = false;
+  await page.route("**/api/push/subscriptions**", async route => {
+    if (route.request().method() === "GET") { await route.fulfill({ json: { configured: true, publicKey: "AQIDBA", registered: succeed && posts > 1 } }); return; }
+    expect(route.request().method()).toBe("POST"); posts++;
+    await route.fulfill({ status: succeed ? 201 : 503, json: {} });
+  });
+  await authenticateStaffApp(page, "staff@demo.bhx");
+  const open = async () => {
+    await page.locator(".notification-button").click();
+    await expect(page.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true })).toBeEnabled();
+    await expect(page.getByRole("dialog")).not.toContainText("Đã bật Web Push");
+  };
+  await open(); await page.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true })).toBeEnabled(); expect(posts).toBe(1);
+  await page.keyboard.press("Escape"); await open();
+  await page.reload(); await open();
+  await authenticateStaffApp(page, "manager@demo.bhx"); await open();
+  succeed = true; await page.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Tắt thông báo trên thiết bị", exact: true })).toBeEnabled(); expect(posts).toBe(2);
+  await page.keyboard.press("Escape"); await page.locator(".notification-button").click();
+  await expect(page.getByRole("button", { name: "Tắt thông báo trên thiết bị", exact: true })).toBeEnabled();
+});
+
+for (const [email, path] of [["staff@demo.bhx", "/staff"], ["manager@demo.bhx", "/staff"], ["manager@demo.bhx", "/admin"], ["admin@demo.bhx", "/admin"]]) {
+  test(`task push deep link selects authorized details without mutation for ${email} at ${path}`, async ({ page }) => {
+    await authenticateStaffApp(page, email);
+    const response = await page.request.get("/api/staff/tasks"); expect(response.ok()).toBe(true);
+    const data = await response.json();
+    expect(data.tasks.length).toBeGreaterThan(0);
+    const target = data.tasks[0];
+    const writes: string[] = [];
+    page.on("request", request => { if (request.method() === "POST" && /\/api\/staff\/tasks\/[^/]+\/(start|restock|fefo)$/.test(new URL(request.url()).pathname)) writes.push(request.url()); });
+    await page.goto(`${path}?storeId=${data.selectedStoreId}&task=${target.id}`);
+    await expect(page.locator(".store-selector select")).toHaveValue(data.selectedStoreId);
+    if (path === "/staff") {
+      await expect(page.locator(".staff-task-modal h2")).toHaveText(target.title);
+      if (email.startsWith("manager")) await expect(page.locator(".staff-task-modal")).toContainText("Chế độ chỉ xem");
+    } else {
+      const selected = page.locator('tr[aria-current="true"]');
+      await expect(selected.locator("details")).toHaveAttribute("open", "");
+      await expect(selected).toContainText(target.title);
+      await expect(page.getByRole("button", { name: "Bắt đầu", exact: true })).toHaveCount(0);
+    }
+    expect(writes).toEqual([]);
+  });
+}
+
+test("task push deep link survives signed-out login and remains Manager read-only", async ({ page }) => {
+  await authenticateStaffApp(page, "manager@demo.bhx");
+  const feed = await page.request.get("/api/staff/tasks"); expect(feed.ok()).toBe(true);
+  const data = await feed.json(); const target = data.tasks[0]; expect(target).toBeDefined();
+  await page.context().clearCookies();
+  const writes: string[] = [];
+  page.on("request", request => { if (request.method() === "POST" && /\/api\/staff\/tasks\/[^/]+\/(start|restock|fefo)$/.test(new URL(request.url()).pathname)) writes.push(request.url()); });
+  await page.goto(`/admin?storeId=${data.selectedStoreId}&task=${target.id}`);
+  await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("callbackUrl") === `/admin?storeId=${data.selectedStoreId}&task=${target.id}`);
+  await page.getByRole("button", { name: "Quản lý — giám sát cửa hàng", exact: true }).click();
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  await expect(page).toHaveURL(url => url.pathname === "/admin" && url.searchParams.get("task") === target.id);
+  await expect(page.locator('tr[aria-current="true"] details[open]')).toContainText(target.title);
+  await expect(page.getByRole("button", { name: "Bắt đầu", exact: true })).toHaveCount(0);
+  expect(writes).toEqual([]);
 });
 
 for (const admin of [false, true]) {

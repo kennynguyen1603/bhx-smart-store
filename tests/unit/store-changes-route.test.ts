@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getServerSession, taskAggregate, notificationAggregate, unreadCount } = vi.hoisted(() => ({
-  getServerSession: vi.fn(), taskAggregate: vi.fn(), notificationAggregate: vi.fn(), unreadCount: vi.fn(),
+const { getServerSession, taskAggregate, taskEventCount, notificationAggregate, unreadCount } = vi.hoisted(() => ({
+  getServerSession: vi.fn(), taskAggregate: vi.fn(), taskEventCount: vi.fn(), notificationAggregate: vi.fn(), unreadCount: vi.fn(),
 }));
 vi.mock("next-auth", () => ({ getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
-vi.mock("@/lib/db", () => ({ prisma: { task: { aggregate: taskAggregate }, notification: { aggregate: notificationAggregate, count: unreadCount } } }));
+vi.mock("@/lib/db", () => ({ prisma: { task: { aggregate: taskAggregate }, taskEvent: { count: taskEventCount }, notification: { aggregate: notificationAggregate, count: unreadCount } } }));
 const user = { id: "staff-1", role: "STAFF", storeIds: ["store-1"] };
 let tasks: { storeId: string; updatedAt: Date }[];
 let notifications: { userId: string; storeId: string; createdAt: Date; readAt: Date | null }[];
@@ -13,6 +13,7 @@ const at = (seconds: number) => new Date(Date.UTC(2026, 10, 17, 0, 0, seconds));
 const max = (dates: (Date | null)[]) => dates.reduce<Date | null>((latest, date) => date && (!latest || date > latest) ? date : latest, null);
 beforeEach(() => {
   vi.clearAllMocks(); getServerSession.mockResolvedValue({ user }); tasks = []; notifications = [];
+  taskEventCount.mockResolvedValue(0);
   taskAggregate.mockImplementation(async ({ where }) => ({ _max: { updatedAt: max(tasks.filter(t => t.storeId === where.storeId).map(t => t.updatedAt)) } }));
   notificationAggregate.mockImplementation(async ({ where }) => {
     const rows = notifications.filter(n => n.userId === where.userId && n.storeId === where.storeId);
@@ -29,8 +30,18 @@ describe("store change snapshot", () => {
   it("uses only indexed task/notification aggregates and a current-user unread count", async () => {
     expect(await snapshot()).toMatchObject({ token: expect.any(String), taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 });
     expect(taskAggregate).toHaveBeenCalledExactlyOnceWith({ where: { storeId: "store-1" }, _max: { updatedAt: true } });
+    expect(taskEventCount).toHaveBeenCalledExactlyOnceWith({ where: { task: { storeId: "store-1" } } });
     expect(notificationAggregate).toHaveBeenCalledExactlyOnceWith({ where: { userId: "staff-1", storeId: "store-1" }, _max: { createdAt: true, readAt: true } });
     expect(unreadCount).toHaveBeenCalledExactlyOnceWith({ where: { userId: "staff-1", storeId: "store-1", readAt: null } });
+  });
+  it("changes on an additional committed task event even when max updatedAt stays unchanged", async () => {
+    tasks = [{ storeId: "store-1", updatedAt: at(30) }];
+    taskEventCount.mockResolvedValue(1);
+    const before = await snapshot();
+    taskEventCount.mockResolvedValue(2);
+    const after = await snapshot();
+    expect(after.taskUpdatedAt).toBe(before.taskUpdatedAt);
+    expect(after.token).not.toBe(before.token);
   });
   it("changes for task create, start, and complete, and is deterministic between writes", async () => {
     let previous = await snapshot();

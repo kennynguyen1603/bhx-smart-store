@@ -47,6 +47,7 @@ const destructiveActions = {
 type Tab = "tasks" | "overview" | "inventory" | "catalog" | "map" | "fefo" | "users" | "integrations";
 type IntegrationMode = "POS" | "WMS" | "SUPPLIER" | "FEFO";
 const ADMIN_REQUEST_TIMEOUT_MS = 10_000;
+type TaskOverview = Overview & { focusedTask?: AdminTask | null };
 
 class AdminRequestTimeoutError extends Error {}
 
@@ -65,10 +66,10 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, con
   }
 }
 
-export function AdminApp({ user }: { user: Session["user"] }) {
-  const [data, setData] = useState<Overview | null>(null);
-  const [storeId, setStoreId] = useState(user.defaultStoreId || "");
-  const [tab, setTab] = useState<Tab>("overview");
+export function AdminApp({ user, initialStoreId, initialTaskId }: { user: Session["user"]; initialStoreId?: string; initialTaskId?: string }) {
+  const [data, setData] = useState<TaskOverview | null>(null);
+  const [storeId, setStoreId] = useState(initialStoreId || user.defaultStoreId || "");
+  const [tab, setTab] = useState<Tab>(initialTaskId ? "tasks" : "overview");
   const [loading, setLoading] = useState(true);
   const [dialog, setDialog] = useState<AdminDialogDescriptor | null>(null);
   const [confirmation, setConfirmation] = useState<AdminConfirmDescriptor | null>(null);
@@ -102,9 +103,10 @@ export function AdminApp({ user }: { user: Session["user"] }) {
     requestControllers.current.add(controller);
     const promise = (async () => {
       try {
-        const response = await fetchWithTimeout(`/api/admin/overview${storeId ? `?storeId=${encodeURIComponent(storeId)}` : ""}`, { cache: "no-store" }, controller);
+        const query = new URLSearchParams({ ...(storeId ? { storeId } : {}), ...(initialTaskId ? { taskId: initialTaskId } : {}) });
+        const response = await fetchWithTimeout(`/api/admin/overview${query.size ? `?${query}` : ""}`, { cache: "no-store" }, controller);
         if (!response.ok) throw new Error("Overview refresh failed");
-        const result: Overview = await response.json();
+        const result: TaskOverview = await response.json();
         if (!isCurrent() || readVersion !== (readVersionsRef.current.get(storeId) || 0)) return false;
         const confirmed = confirmedReadsRef.current.get(result.selectedStoreId);
         const pending = readPendingRef.current?.storeId === result.selectedStoreId ? readPendingRef.current : null;
@@ -129,7 +131,7 @@ export function AdminApp({ user }: { user: Session["user"] }) {
     })();
     activeLoadRef.current = { controller, promise };
     return promise;
-  }, [storeId, notify]);
+  }, [storeId, notify, initialTaskId]);
   useEffect(() => {
     loadStoreIdRef.current = storeId;
     const initialLoad = window.setTimeout(() => void load(), 0);
@@ -156,6 +158,7 @@ export function AdminApp({ user }: { user: Session["user"] }) {
     };
   }, []);
   const store = data?.stores.find((item) => item.id === storeId) || data?.stores[0];
+  const tasks = data?.focusedTask && !data.tasks.some(task => task.id === data.focusedTask!.id) ? [data.focusedTask, ...data.tasks] : data?.tasks || [];
   const lowCount = data?.inventories.filter((item) => item.onShelf <= item.lowThreshold).length || 0;
   const referenceTime = data ? new Date(data.generatedAt).getTime() : 0;
   const expiring = data?.lots.filter((lot) => (new Date(lot.expiryDate).getTime() - referenceTime) / 86400000 <= 3).length || 0;
@@ -319,7 +322,7 @@ export function AdminApp({ user }: { user: Session["user"] }) {
   const nav = [{ id:"overview",label:"Tổng quan",icon:LayoutGrid },{ id:"tasks",label:"Nhiệm vụ",icon:ClipboardList },{ id:"inventory",label:"Tồn kho",icon:Boxes },{ id:"catalog",label:"Danh mục",icon:PackageSearch },{ id:"map",label:"Sơ đồ & ESL",icon:Store },{ id:"fefo",label:"FEFO",icon:Settings2 },{ id:"users",label:"Người dùng",icon:Users },{ id:"integrations",label:"Tích hợp",icon:Database }] as const;
   return <main className="app-shell admin-shell"><aside className="sidebar"><Logo inverse /><div className="store-selector"><label>Cửa hàng quản trị</label><select value={storeId} onChange={(e) => setStoreId(e.target.value)}>{data?.stores.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><nav className="side-nav">{nav.map(({id,label,icon:Icon}) => <button key={id} className={tab===id?"active":""} onClick={() => setTab(id)}><Icon />{label}</button>)}</nav><div className="user-card"><span className="user-avatar">AD</span><span><strong>{user.name}</strong><small>{DEMO_ACCOUNTS.find((account) => account.role === user.role)?.label || user.role}</small></span><button onClick={() => signOut({callbackUrl:"/"})}><LogOut /></button></div></aside><section className="workspace"><header className="workspace-header"><div><span className="section-label">{store?.code}</span><h1>{nav.find((item)=>item.id===tab)?.label}</h1><p>{store?.address}</p></div><div className="header-actions"><span className="connection-pill"><span className="live-dot" />Đã đồng bộ</span><StaffNotificationCenter key={storeId} storeId={storeId} notifications={data?.selectedStoreId === storeId ? data.notifications : []} onRead={markNotificationsRead} /><button className="icon-button" aria-label="Tải lại dữ liệu" data-admin-dialog-fallback disabled={loading} onClick={() => void load()}><RefreshCw className={loading?"spin":""}/></button></div></header>
   {tab==="overview"&&<><div className="metric-grid"><AdminMetric icon={Store} label="Cửa hàng" value={data?.stores.length||0}/><AdminMetric icon={Boxes} label="SKU tại cửa hàng" value={data?.inventories.length||0}/><AdminMetric icon={Activity} label="Kệ sắp hết" value={lowCount} alert/><AdminMetric icon={ShieldCheck} label="Lô cần FEFO" value={expiring}/></div>{canAdmin&&<div className="admin-actions"><button className="button" onClick={createStore}><Plus/>Thêm cửa hàng</button><button className="button" disabled={!store} onClick={editStore}>Sửa cửa hàng</button>{store&&<button className="button danger" onClick={()=>requestRemoval("store",store.id,store.name)}>Vô hiệu hoá</button>}</div>}<div className="admin-grid"><section className="panel"><Panel title="Tồn kho gần đây"/><InventoryTable items={data?.inventories.slice(0,6)||[]} onEdit={editInventory}/></section><section className="panel"><Panel title="Luồng tích hợp"/><div className="log-list">{data?.integrations.slice(0,8).map((event)=><div className="log-row" key={event.id}><code>{event.type}</code><span>{event.externalEventId}</span><span className={`badge ${event.status==="PROCESSED"?"open":"blocked"}`}>{event.status}</span></div>)}</div></section></div></>}
-  {tab==="tasks"&&<AdminTaskPanel key={store?.id || "no-store"} tasks={data?.tasks || []} assignees={data?.taskReferences?.assignees || []} canCreate={Boolean(store && data?.taskReferences?.products.length)} onCreate={() => { if (store) setDialog({ kind: "task", mode: "create", defaultValues: { storeId: store.id } }); }} />}
+  {tab==="tasks"&&<AdminTaskPanel key={store?.id || "no-store"} selectedTaskId={initialTaskId} tasks={tasks} assignees={data?.taskReferences?.assignees || []} canCreate={Boolean(store && data?.taskReferences?.products.length)} onCreate={() => { if (store) setDialog({ kind: "task", mode: "create", defaultValues: { storeId: store.id } }); }} />}
   {tab==="inventory"&&<section className="panel"><Panel title="Tồn kệ và kho sau"/><InventoryTable items={data?.inventories||[]} onEdit={editInventory}/></section>}
   {tab==="catalog"&&<div className="admin-grid"><section className="panel"><Panel title="Sản phẩm"/>{canAdmin&&<button className="button" onClick={() => setDialog({ kind: "product", mode: "create", defaultValues: {} })}><Plus/>Thêm sản phẩm</button>}<div className="table-scroll"><table className="data-table"><thead><tr><th>SKU</th><th>Sản phẩm</th><th>Giá</th><th>Trạng thái</th><th></th></tr></thead><tbody>{data?.products.map((product)=><tr key={product.id}><td><code>{product.sku}</code></td><td>{product.emoji} {product.name}<br/><small>{product.category}</small></td><td>{formatVnd(product.basePriceVnd)}</td><td><span className={`badge ${product.active?"open":"completed"}`}>{product.active?"Active":"Ẩn"}</span></td><td>{canAdmin&&<span className="row-actions"><button className="button" onClick={()=>editProduct(product)}>Sửa</button><button className="button danger" onClick={()=>requestRemoval("product",product.id,product.name)}>Ẩn</button></span>}</td></tr>)}</tbody></table></div></section><section className="panel"><Panel title="Lô hàng & nhà cung cấp"/>{canAdmin&&<div className="admin-actions"><button className="button" disabled={!store || !data?.products.length || !data?.suppliers.length} onClick={createLot}><Plus/>Thêm lô</button><button className="button" onClick={createSupplier}><Plus/>Nhà cung cấp</button></div>}{canAdmin&&(!store||!data?.products.length||!data?.suppliers.length)&&<p className="muted">Cần cửa hàng, sản phẩm và nhà cung cấp để thêm lô.</p>}<div className="table-scroll"><table className="data-table"><thead><tr><th>Lô</th><th>Sản phẩm</th><th>Nhà cung cấp</th><th>HSD</th><th></th></tr></thead><tbody>{data?.lots.map((lot)=><tr key={lot.id}><td><code>{lot.batchCode}</code></td><td>{lot.product.name}</td><td>{lot.supplier.name}<br/><small>{lot.origin}</small></td><td>{new Intl.DateTimeFormat("vi-VN").format(new Date(lot.expiryDate))}<br/><span className={`badge ${lot.status==="QUARANTINED"?"blocked":"open"}`}>{lot.status}</span></td><td>{canAdmin&&<span className="row-actions"><button className="button" onClick={()=>editLot(lot)}>Sửa</button><button className="button danger" onClick={()=>requestRemoval("lot",lot.id,lot.batchCode)}>Đóng</button></span>}</td></tr>)}</tbody></table></div><h3>Nhà cung cấp</h3>{data?.suppliers.map((supplier)=><div className="log-row" key={supplier.id}><code>{supplier.code}</code><span>{supplier.name} · {supplier.country}</span><span>{supplier.certificate}{canAdmin&&<span className="row-actions"><button className="button" onClick={()=>editSupplier(supplier)}>Sửa</button><button className="button danger" onClick={()=>requestRemoval("supplier",supplier.id,supplier.name)}>Ẩn</button></span>}</span></div>)}</section></div>}
   {tab==="map"&&!store&&<section className="panel"><p className="muted">Cần cửa hàng để quản lý sơ đồ và ESL.</p><div className="admin-actions"><button className="button" disabled>Thêm zone</button><button className="button" disabled>Thêm kệ</button><button className="button" disabled>Gắn ESL</button></div></section>}

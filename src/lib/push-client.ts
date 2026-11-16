@@ -128,7 +128,17 @@ export async function getDevicePushState(): Promise<"enabled" | "disabled" | Pus
     const worker = navigator.serviceWorker;
     if (pendingCleanup.has(worker)) return { status: "failed", retry: "disable", message: "Chưa hoàn tất tắt thông báo trên thiết bị. Nhấn tắt để thử lại." };
     const registration = await bounded(worker.getRegistration(), 5_000, deviceFailure);
-    return registration?.pushManager && await bounded(registration.pushManager.getSubscription(), 8_000, deviceFailure) ? "enabled" : "disabled";
+    const subscription = registration?.pushManager && await bounded(registration.pushManager.getSubscription(), 8_000, deviceFailure);
+    if (!subscription) return "disabled";
+    const controller = new AbortController();
+    const verification = await bounded((async () => {
+      const response = await fetch(`/api/push/subscriptions?endpoint=${encodeURIComponent(subscription.endpoint)}`, {
+        cache: "no-store", credentials: "same-origin", signal: controller.signal,
+      });
+      if (!response.ok) throw new Error("Push verification unavailable");
+      return await response.json() as { registered?: boolean; configured?: boolean };
+    })(), 8_000, deviceFailure, () => controller.abort());
+    return verification.registered === true && verification.configured === true ? "enabled" : "disabled";
   } catch (error) { return error instanceof PushSetupFailure ? error.result : deviceFailure; }
 }
 

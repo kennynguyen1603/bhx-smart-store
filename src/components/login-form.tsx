@@ -16,8 +16,17 @@ export function LoginForm() {
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError("");
-    const isDemoAccount = DEMO_ACCOUNTS.some((account) => account.email === email.trim().toLowerCase());
-    const callbackUrl = isDemoAccount ? demoDestinationForEmail(email) : searchParams.get("callbackUrl") || demoDestinationForEmail(email);
+    const account = DEMO_ACCOUNTS.find((account) => account.email === email.trim().toLowerCase());
+    const requested = searchParams.get("callbackUrl");
+    let taskDestination: string | undefined;
+    try {
+      const destination = new URL(requested || "", window.location.origin);
+      if (requested?.startsWith("/") && destination.origin === window.location.origin && ["/staff", "/admin"].includes(destination.pathname)
+        && destination.searchParams.get("task") && destination.searchParams.get("storeId") && (destination.pathname !== "/admin" || account?.role !== "STAFF")) {
+        taskDestination = destination.pathname + destination.search;
+      }
+    } catch { /* An invalid destination uses the account's normal fallback. */ }
+    const callbackUrl = taskDestination || (account ? demoDestinationForEmail(email) : requested || demoDestinationForEmail(email));
     const result = await signIn("credentials", { email, password, redirect: false, callbackUrl });
     setLoading(false);
     if (result?.error) setError("Email hoặc mật khẩu không đúng.");

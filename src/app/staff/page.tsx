@@ -6,8 +6,13 @@ import { authOptions } from "@/lib/auth";
 
 export const metadata: Metadata = { title: "Staff Task PWA" };
 
-export default async function StaffPage() {
+export default async function StaffPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const query = await searchParams;
+  const requestedStore = typeof query.storeId === "string" ? query.storeId : undefined;
+  const requestedTask = typeof query.task === "string" ? query.task : undefined;
+  const destination = new URLSearchParams({ ...(requestedStore ? { storeId: requestedStore } : {}), ...(requestedTask ? { task: requestedTask } : {}) });
   const session = await getServerSession(authOptions);
-  if (!session?.user) redirect("/login?callbackUrl=/staff");
-  return <StaffApp user={session.user} />;
+  if (!session?.user) redirect(`/login?callbackUrl=${encodeURIComponent(`/staff${destination.size ? `?${destination}` : ""}`)}`);
+  const authorized = !requestedStore || session.user.role === "ADMIN" || session.user.storeIds.includes(requestedStore);
+  return <StaffApp key={`${session.user.id}:${destination}`} user={session.user} initialStoreId={authorized ? requestedStore : undefined} initialTaskId={authorized ? requestedTask : undefined} />;
 }

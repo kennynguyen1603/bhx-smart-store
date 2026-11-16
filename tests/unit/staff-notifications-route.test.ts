@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getServerSession, updateMany, deleteMany } = vi.hoisted(() => ({ getServerSession: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() }));
+const { getServerSession, updateMany, deleteMany, findFirst } = vi.hoisted(() => ({ getServerSession: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn(), findFirst: vi.fn() }));
 vi.mock("next-auth", () => ({ getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
-vi.mock("@/lib/db", () => ({ prisma: { notification: { updateMany }, pushSubscription: { deleteMany } } }));
+vi.mock("@/lib/db", () => ({ prisma: { notification: { updateMany }, pushSubscription: { deleteMany, findFirst } } }));
 const user = { id: "staff-1", role: "STAFF", storeIds: ["store-1"], defaultStoreId: "store-1" };
 beforeEach(() => { vi.clearAllMocks(); getServerSession.mockResolvedValue({ user }); updateMany.mockResolvedValue({ count: 2 }); });
 afterEach(() => vi.unstubAllEnvs());
@@ -40,6 +40,18 @@ describe("PATCH staff notifications", () => {
 });
 
 describe("GET push subscription readiness", () => {
+  it("verifies the endpoint only for the authenticated user and prevents caching across accounts", async () => {
+    const { GET } = await import("@/app/api/push/subscriptions/route");
+    findFirst.mockResolvedValueOnce({ id: "registered" }).mockResolvedValueOnce(null);
+    const request = new Request("http://localhost/api/push/subscriptions?endpoint=https%3A%2F%2Fpush.example%2Fone&userId=someone-else");
+    const first = await GET(request);
+    expect(await first.json()).toMatchObject({ registered: true });
+    expect(first.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(findFirst).toHaveBeenLastCalledWith({ where: { endpoint: "https://push.example/one", userId: "staff-1" }, select: { id: true } });
+    getServerSession.mockResolvedValue({ user: { ...user, id: "staff-2" } });
+    expect(await (await GET(request)).json()).toMatchObject({ registered: false });
+    expect(findFirst).toHaveBeenLastCalledWith({ where: { endpoint: "https://push.example/one", userId: "staff-2" }, select: { id: true } });
+  });
   beforeEach(() => {
     vi.stubEnv("NEXT_PUBLIC_VAPID_PUBLIC_KEY", "public-key"); vi.stubEnv("VAPID_PRIVATE_KEY", "private-secret"); vi.stubEnv("VAPID_SUBJECT", "mailto:private@example.com");
   });

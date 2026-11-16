@@ -37,7 +37,9 @@ export async function GET(request: Request) {
     }));
     const taskReferences = { products: taskProducts, shelves: taskShelves, lots: taskLots.map(lot => ({ id: lot.id, name: lot.batchCode, productId: lot.productId })), assignees };
     const tasks = [...activeTasks, ...terminalTasks].slice(0, 100);
-    return Response.json({ generatedAt: new Date().toISOString(), selectedStoreId, stores, users, products, suppliers, lots, inventories, integrations, audits, rules, tasks, taskReferences, notifications });
+    const taskId = url.searchParams.get("taskId");
+    const focusedTask = taskId ? tasks.find(task => task.id === taskId) || await prisma.task.findFirst({ where: { ...scope, id: taskId }, include: taskInclude }) : null;
+    return Response.json({ generatedAt: new Date().toISOString(), selectedStoreId, stores, users, products, suppliers, lots, inventories, integrations, audits, rules, tasks, focusedTask, taskReferences, notifications });
   } catch (error) {
     return apiErrorResponse(error);
   }

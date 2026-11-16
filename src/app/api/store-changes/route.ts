@@ -8,8 +8,11 @@ export async function GET(request: Request) {
     const storeId = z.string().trim().min(1).parse(new URL(request.url).searchParams.get("storeId"));
     ensureStoreAccess(user, storeId);
     const where = { userId: user.id, storeId };
-    const [tasks, notifications, unreadCount] = await Promise.all([
+    const [tasks, taskEventCount, notifications, unreadCount] = await Promise.all([
       prisma.task.aggregate({ where: { storeId }, _max: { updatedAt: true } }),
+      // Events commit with task writes. A max timestamp alone misses an older
+      // transaction that commits after a newer maximum has been acknowledged.
+      prisma.taskEvent.count({ where: { task: { storeId } } }),
       prisma.notification.aggregate({ where, _max: { createdAt: true, readAt: true } }),
       prisma.notification.count({ where: { ...where, readAt: null } }),
     ]);
@@ -18,7 +21,7 @@ export async function GET(request: Request) {
     const readAt = notifications._max.readAt?.toISOString() || null;
     const notificationUpdatedAt = [createdAt, readAt].filter((date): date is string => date !== null).sort().at(-1) || null;
     return Response.json({
-      token: JSON.stringify([taskUpdatedAt, createdAt, readAt, unreadCount]),
+      token: JSON.stringify([taskUpdatedAt, taskEventCount, createdAt, readAt, unreadCount]),
       taskUpdatedAt, notificationUpdatedAt, unreadCount,
     }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {

@@ -57,6 +57,21 @@ it("Manager monitors badges, names and completion time with filters and no execu
   expect(writes).toHaveLength(0);
 });
 
+it.each(["ADMIN", "MANAGER"] as const)("%s task destination selects the store task tab and opens only that task's details", async role => {
+  await act(async () => root.render(<AdminApp user={{ ...user, role }} initialStoreId="store" initialTaskId="task-done" />));
+  await act(async () => { await new Promise(done => setTimeout(done, 30)); });
+  expect(host.querySelector(".admin-task-panel")).not.toBeNull();
+  expect([...host.querySelectorAll("details")].filter(el => el.open).map(el => el.textContent)).toEqual([expect.stringContaining("Đã xong")]);
+  expect(writes).toEqual([]); expect(host.textContent).not.toContain("Bắt đầu");
+});
+it("renders a focused task outside the normal Admin list cap without a write", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...data, tasks: [], focusedTask: data.tasks[1] })));
+  await act(async () => root.render(<AdminApp user={user} initialStoreId="store" initialTaskId="task-done" />));
+  await act(async () => { await new Promise(done => setTimeout(done, 30)); });
+  expect(host.querySelector('tr[aria-current="true"] details[open]')?.textContent).toContain("Đã xong");
+  expect(writes).toEqual([]);
+});
+
 it("submits an unassigned task with optional fields omitted", async () => {
   await mount(); await click("Giao nhiệm vụ"); await select("Loại nhiệm vụ", "Bổ sung hàng"); await select("Sản phẩm", secondProduct.name); await select("Kệ", shelf.label); await select("Độ ưu tiên", "Bình thường"); await submit();
   expect(writes).toEqual([{ url: "/api/admin/tasks", method: "POST", body: { storeId: "store", type: "RESTOCK", productId: secondProduct.id, shelfId: shelf.id, priority: "NORMAL" } }]);

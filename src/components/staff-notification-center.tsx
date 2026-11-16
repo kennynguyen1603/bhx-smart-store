@@ -40,7 +40,7 @@ export function StaffNotificationCenter({ notifications, storeId, onRead }: {
     try {
       const state = await getDevicePushState();
       if (typeof state === "string") { setPushEnabled(state === "enabled"); setPushResult({ status: state }); }
-      else { setPushResult(state); if (state.retry === "disable") setPushEnabled(true); }
+      else { setPushResult(state); setPushEnabled(state.retry === "disable"); }
     } finally { pushGuard.current = false; setPushChecking(false); }
   }
 

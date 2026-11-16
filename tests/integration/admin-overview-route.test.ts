@@ -47,6 +47,17 @@ it("only offers selected-store inventory products, shelves and active Staff reci
   expect(data.stores.map((s: { id: string }) => s.id)).toEqual([storeId]);
 });
 it("rejects an unauthorized store instead of exposing its task data", async () => { expect((await overview(`?storeId=${foreignId}`)).status).toBe(403); });
+it("resolves an authorized deep-linked task beyond the list cap without exposing a foreign task", async () => {
+  const task = await prisma.task.findFirstOrThrow({ where: { storeId, title: "Task 3" } });
+  const foreign = await prisma.task.findFirstOrThrow({ where: { storeId: foreignId } });
+  const before = await prisma.taskEvent.count({ where: { taskId: task.id } });
+  const data = await (await overview(`?storeId=${storeId}&taskId=${task.id}`)).json();
+  expect(data.tasks).toHaveLength(100); expect(data.tasks.some((row: { id: string }) => row.id === task.id)).toBe(false);
+  expect(data.focusedTask).toMatchObject({ id: task.id, title: "Task 3" });
+  expect((await (await overview(`?storeId=${storeId}&taskId=${foreign.id}`)).json()).focusedTask).toBeNull();
+  expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
+  expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(before);
+});
 it("never falls back to all stores when Manager has no memberships or default", async () => {
   const previous = auth.session; auth.session = { expires: "2099-01-01", user: { id: staffId, role: "MANAGER", storeIds: [], defaultStoreId: null } };
   try { const data = await (await overview()).json(); expect(data.tasks).toEqual([]); expect(data.taskReferences.assignees).toEqual([]); expect(data.inventories).toEqual([]); expect(data.notifications).toEqual([]); }

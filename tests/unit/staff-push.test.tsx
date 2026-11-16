@@ -43,7 +43,7 @@ const subscription = { endpoint: "https://push.example/subscription", unsubscrib
 let container: HTMLDivElement;
 let root: Root;
 let fetchMock: Mock<typeof fetch>;
-let pushRequest: (init?: RequestInit) => Promise<Response>;
+let pushRequest: (init?: RequestInit, url?: string) => Promise<Response>;
 let readRequest: () => Promise<Response>;
 let payload: typeof staffPayload;
 let workerDescriptor: PropertyDescriptor | undefined;
@@ -89,13 +89,13 @@ beforeEach(() => {
   workerDescriptor = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
   payload = structuredClone(staffPayload);
   subscription.unsubscribe.mockReset().mockResolvedValue(true);
-  pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 201 }) : Response.json({ configured: true, publicKey: "AQIDBA" });
+  pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 201 }) : Response.json({ configured: true, publicKey: "AQIDBA", registered: true });
   readRequest = async () => Response.json({ updated: 1, readAt: "2026-11-16T03:00:00.000Z" });
   fetchMock = vi.fn(async (input, init) => {
     const url = String(input);
     if (url.startsWith("/api/store-changes")) return Response.json({ token: "baseline", taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 });
     if (url.startsWith("/api/staff/tasks")) return Response.json(payload);
-    if (url === "/api/push/subscriptions") return pushRequest(init);
+    if (url.startsWith("/api/push/subscriptions")) return pushRequest(init, url);
     if (url === "/api/staff/notifications") return readRequest();
     throw new Error(`Unexpected request: ${url}`);
   });
@@ -416,9 +416,54 @@ describe.each(["Tự chọn một nhiệm vụ", "Chọn trong nhiều nhiệm v
 });
 
 describe("push toggle", () => {
+  it("keeps failed registration retryable after center reopen and a full component reload", async () => {
+    const apis = installPushApis();
+    apis.subscribe.mockImplementation(async () => { apis.getSubscription.mockResolvedValue(subscription); return subscription; });
+    pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 503 }) : Response.json({ configured: true, publicKey: "AQIDBA", registered: false });
+    await render(); await enable();
+    expect(button("Bật thông báo trên thiết bị").disabled).toBe(false);
+    await click(bell()); await openCenter();
+    expect(button("Bật thông báo trên thiết bị").disabled).toBe(false);
+    expect(document.body.textContent).not.toContain("Đã bật Web Push cho thiết bị này.");
+    await act(async () => root.unmount()); root = createRoot(container);
+    await render(); await openCenter();
+    expect(button("Bật thông báo trên thiết bị").disabled).toBe(false);
+    pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 201 }) : Response.json({ configured: true, publicKey: "AQIDBA", registered: false });
+    await click(button("Bật thông báo trên thiết bị"));
+    expect(button("Tắt thông báo trên thiết bị").disabled).toBe(false);
+    expect(pushCalls("POST")).toHaveLength(2);
+    expect(apis.subscribe).toHaveBeenCalledOnce();
+  });
+  it("requires current-user server registration rather than another account's browser subscription", async () => {
+    const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    let registered = true;
+    pushRequest = async () => Response.json({ configured: true, publicKey: "AQIDBA", registered });
+    expect(await getDevicePushState()).toBe("enabled");
+    registered = false;
+    expect(await getDevicePushState()).toBe("disabled");
+    const checks = fetchMock.mock.calls.filter(([url]) => String(url).includes("?endpoint="));
+    expect(checks).toHaveLength(2);
+    expect(new URL(String(checks[0][0]), "http://localhost").searchParams.get("endpoint")).toBe(subscription.endpoint);
+  });
+  it("clears a previously enabled presentation when authenticated verification becomes unavailable", async () => {
+    const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    await render(); await openCenter(); expect(button("Tắt thông báo trên thiết bị").disabled).toBe(false);
+    await click(bell()); pushRequest = async () => new Response(null, { status: 503 }); await openCenter();
+    expect(button("Bật thông báo trên thiết bị").disabled).toBe(false);
+    expect(document.body.textContent).not.toContain("Đã bật Web Push cho thiết bị này.");
+  });
+  it("bounds incomplete authenticated verification bodies so checking remains retryable", async () => {
+    vi.useFakeTimers();
+    const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    pushRequest = async () => ({ ok: true, json: () => new Promise(() => {}) }) as Response;
+    let state: unknown;
+    void getDevicePushState().then(value => { state = value; });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(state).toMatchObject({ status: "failed" });
+  });
   it("loads an existing subscription as enabled and disables one lifecycle under rapid clicks", async () => {
     const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
-    pushRequest = async () => new Response(null, { status: 204 });
+    pushRequest = async (init) => init?.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json({ configured: true, registered: true });
     await render(); await openCenter();
     await act(async () => { const action = button("Tắt thông báo trên thiết bị"); action.click(); action.click(); });
     expect(subscription.unsubscribe).toHaveBeenCalledOnce(); expect(pushCalls("DELETE")).toHaveLength(1);
@@ -433,7 +478,7 @@ describe("push toggle", () => {
   it("retries server cleanup after local unsubscribe succeeded and the subscription disappeared", async () => {
     const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
     subscription.unsubscribe.mockImplementation(async () => { apis.getSubscription.mockResolvedValue(null); return true; });
-    pushRequest = async () => new Response(null, { status: 503 });
+    pushRequest = async (init) => init?.method === "DELETE" ? new Response(null, { status: 503 }) : Response.json({ configured: true, registered: true });
     await render(); await openCenter(); await click(button("Tắt thông báo trên thiết bị"));
     expect(button("Tắt thông báo trên thiết bị").disabled).toBe(false);
     pushRequest = async () => new Response(null, { status: 204 }); await click(button("Tắt thông báo trên thiết bị"));
@@ -498,7 +543,7 @@ describe("push disable timeouts", () => {
 it("keeps cleanup retry available after reopening without falsely claiming browser push is enabled", async () => {
   const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
   subscription.unsubscribe.mockImplementation(async () => { apis.getSubscription.mockResolvedValue(null); return true; });
-  pushRequest = async () => new Response(null, { status: 503 });
+  pushRequest = async (init) => init?.method === "DELETE" ? new Response(null, { status: 503 }) : Response.json({ configured: true, registered: true });
   await render(); await openCenter(); await click(button("Tắt thông báo trên thiết bị"));
   await click(bell()); await openCenter();
   expect(button("Tắt thông báo trên thiết bị").disabled).toBe(false);

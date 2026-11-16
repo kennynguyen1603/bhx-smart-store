@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -22,7 +22,14 @@ function Filter({ label, value, onChange, options }: { label: string; value: str
   return <div className="admin-task-filter"><Label htmlFor={id}>{label}</Label><Select value={value} onValueChange={onChange}><SelectTrigger id={id}><SelectValue /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}</SelectContent></Select></div>;
 }
 function Timestamp({ value }: { value: string }) { return <time dateTime={value}>{new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(value))}</time>; }
-export function AdminTaskPanel({ tasks, assignees, canCreate, onCreate }: { tasks: AdminTask[]; assignees: ReferenceOption[]; canCreate: boolean; onCreate: () => void }) {
+export function AdminTaskPanel({ tasks, assignees, canCreate, onCreate, selectedTaskId }: { tasks: AdminTask[]; assignees: ReferenceOption[]; canCreate: boolean; onCreate: () => void; selectedTaskId?: string }) {
+  const selectedRowRef = useRef<HTMLTableRowElement>(null);
+  const scrolledTaskRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!selectedRowRef.current || scrolledTaskRef.current === selectedTaskId) return;
+    selectedRowRef.current.scrollIntoView?.({ block: "nearest" });
+    scrolledTaskRef.current = selectedTaskId;
+  }, [selectedTaskId, tasks]);
   const [status, setStatus] = useState("all"), [type, setType] = useState("all"), [assignee, setAssignee] = useState("all");
   const people = [...new Map([...assignees, ...tasks.flatMap(task => task.assignee ? [task.assignee] : [])].map(person => [person.id, person])).values()];
   const filtered = tasks.filter(task => (status === "all" || task.status === status) && (type === "all" || task.type === type) && (assignee === "all" || (assignee === "unassigned" ? !task.assignee : task.assignee?.id === assignee)));
@@ -36,7 +43,7 @@ export function AdminTaskPanel({ tasks, assignees, canCreate, onCreate }: { task
       <Filter label="Lọc người nhận" value={assignee} onChange={setAssignee} options={[{ id: "all", name: "Tất cả người nhận" }, { id: "unassigned", name: "Chưa phân công" }, ...people]} />
     </div>
     <div className="table-scroll"><table className="data-table admin-task-table"><thead><tr><th>Nhiệm vụ</th><th>Kệ / Lô</th><th>Người nhận</th><th>Trạng thái</th><th>Hoàn thành lúc</th></tr></thead><tbody>
-      {filtered.map(task => <tr key={task.id}><td><strong>{task.product.name}</strong><br /><span>{types[task.type]}</span><details><summary>Xem chi tiết</summary><p>{task.title}</p>{task.note && <p>{task.note}</p>}<p>Tạo lúc: <Timestamp value={task.createdAt} /></p><p>Cập nhật: <Timestamp value={task.updatedAt} /></p>{task.dueAt && <p>Hạn hoàn thành: <Timestamp value={task.dueAt} /></p>}</details></td><td>{task.shelf.label}<br /><small>{task.lot?.batchCode || "Không gắn lô"}</small></td><td>{task.assignee?.name || "Chưa phân công"}</td><td><div className="admin-task-badges"><Badge variant={TASK_STATUS_PRESENTATION[task.status].variant}>{TASK_STATUS_PRESENTATION[task.status].label}</Badge><Badge variant={task.priority === "HIGH" ? "destructive" : "outline"}>{priorities[task.priority]}</Badge></div></td><td>{task.completedAt ? <Timestamp value={task.completedAt} /> : "—"}</td></tr>)}
+      {filtered.map(task => <tr key={task.id} ref={task.id === selectedTaskId ? selectedRowRef : undefined} aria-current={task.id === selectedTaskId ? "true" : undefined}><td><strong>{task.product.name}</strong><br /><span>{types[task.type]}</span><details open={task.id === selectedTaskId || undefined}><summary>Xem chi tiết</summary><p>{task.title}</p>{task.note && <p>{task.note}</p>}<p>Tạo lúc: <Timestamp value={task.createdAt} /></p><p>Cập nhật: <Timestamp value={task.updatedAt} /></p>{task.dueAt && <p>Hạn hoàn thành: <Timestamp value={task.dueAt} /></p>}</details></td><td>{task.shelf.label}<br /><small>{task.lot?.batchCode || "Không gắn lô"}</small></td><td>{task.assignee?.name || "Chưa phân công"}</td><td><div className="admin-task-badges"><Badge variant={TASK_STATUS_PRESENTATION[task.status].variant}>{TASK_STATUS_PRESENTATION[task.status].label}</Badge><Badge variant={task.priority === "HIGH" ? "destructive" : "outline"}>{priorities[task.priority]}</Badge></div></td><td>{task.completedAt ? <Timestamp value={task.completedAt} /> : "—"}</td></tr>)}
     </tbody></table></div>
     {!filtered.length && <p className="muted">Không có nhiệm vụ phù hợp.</p>}
   </section>;
