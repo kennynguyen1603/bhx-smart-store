@@ -46,6 +46,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => { toast.dismiss(); root.unmount(); });
   host.remove();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -101,6 +102,7 @@ describe.each(actions)("$s integration simulation", (mode, label) => {
 
     expect(writes).toHaveLength(1);
     expect(writes[0].body).toMatchObject({ mode });
+    expect(writes[0].body.operationId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(simulatorButtons().every((item) => item.disabled)).toBe(true);
     const active = button("Đang xử lý…", simulator());
     expect(active.querySelector(".ui-spinner")).not.toBeNull();
@@ -180,4 +182,53 @@ it("labels global FEFO scope accurately and keeps simulator actions available to
   await openIntegrations(manager);
   expect(simulator().textContent).toContain("FEFO chạy cho tất cả cửa hàng đang hoạt động");
   expect(simulatorButtons().every((item) => !item.disabled)).toBe(true);
+});
+
+it("times out a never-settling write, clears pending, and reuses its operation key for explicit retry", async () => {
+  await openIntegrations();
+  vi.useFakeTimers();
+  writeRequest = () => new Promise<Response>(() => undefined);
+
+  act(() => button("POS bán 2 sản phẩm", simulator()).click());
+  await act(async () => { for (let index = 0; index < 8; index += 1) await Promise.resolve(); });
+  expect(simulatorButtons().every((item) => item.disabled)).toBe(true);
+
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
+  await act(async () => vi.advanceTimersByTimeAsync(100));
+  await act(async () => { for (let index = 0; index < 8; index += 1) await Promise.resolve(); });
+  expect(simulatorButtons().every((item) => !item.disabled)).toBe(true);
+  expect(document.body.textContent).toContain("Không xác định được kết quả mô phỏng do quá thời gian");
+  const operationId = writes[0].body.operationId;
+
+  writeRequest = async () => Response.json({ ok: true });
+  await act(async () => button("POS bán 2 sản phẩm", simulator()).click());
+  await act(async () => { for (let index = 0; index < 12; index += 1) await Promise.resolve(); });
+  expect(writes).toHaveLength(2);
+  expect(writes[1].body.operationId).toBe(operationId);
+
+  await act(async () => button("POS bán 2 sản phẩm", simulator()).click());
+  await act(async () => { for (let index = 0; index < 12; index += 1) await Promise.resolve(); });
+  expect(writes).toHaveLength(3);
+  expect(writes[2].body.operationId).not.toBe(operationId);
+});
+
+it("times out a never-settling refresh after confirmed success without replaying the write", async () => {
+  await openIntegrations();
+  vi.useFakeTimers();
+  const successToast = vi.spyOn(toast, "success");
+  const errorToast = vi.spyOn(toast, "error");
+  refreshRequest = () => new Promise<Response>(() => undefined);
+
+  act(() => button("WMS nhập thêm kho sau", simulator()).click());
+  await act(async () => { for (let index = 0; index < 12; index += 1) await Promise.resolve(); });
+  expect(writes).toHaveLength(1);
+  expect(simulatorButtons().every((item) => item.disabled)).toBe(true);
+
+  await act(async () => vi.advanceTimersByTimeAsync(10_000));
+  await act(async () => vi.advanceTimersByTimeAsync(100));
+  await act(async () => { for (let index = 0; index < 12; index += 1) await Promise.resolve(); });
+  expect(simulatorButtons().every((item) => !item.disabled)).toBe(true);
+  expect(writes).toHaveLength(1);
+  expect(successToast).toHaveBeenCalledWith("Đã cập nhật dữ liệu.");
+  expect(errorToast).toHaveBeenCalledWith("Đã lưu thay đổi nhưng quá thời gian tải lại dữ liệu. Vui lòng tải lại dữ liệu.");
 });

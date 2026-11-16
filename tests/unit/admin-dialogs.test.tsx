@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminEntityDialog } from "@/components/admin/admin-entity-dialog";
 import { AdminConfirmDialog } from "@/components/admin/admin-confirm-dialog";
 import type { AdminDialogProps } from "@/components/admin/admin-types";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster, toast } from "@/components/ui/sonner";
 
 let root: Root;
 let host: HTMLDivElement;
@@ -138,4 +138,10 @@ describe.each(["entity", "confirm"] as const)("Admin %s dialog", (kind) => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
     expect(document.activeElement).toBe(connected ? opener : fallback);
   });
+});
+
+it("localizes the Sonner close button accessible label", async () => {
+  await act(async () => root.render(<Toaster />));
+  await act(async () => { toast("Đã lưu", { duration: Infinity }); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="Đóng thông báo"]')).not.toBeNull();
 });

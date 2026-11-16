@@ -51,9 +51,25 @@ export async function POST(request: Request, context: { params: Promise<{ resour
       }
       case "suppliers": return Response.json(await prisma.supplier.create({ data: supplierSchema.parse(raw) }), { status: 201 });
       case "lots": return Response.json(await prisma.lot.create({ data: lotSchema.parse(raw) }), { status: 201 });
-      case "shelves": return Response.json(await prisma.shelf.create({ data: shelfSchema.parse(raw) }), { status: 201 });
+      case "shelves": {
+        const data = shelfSchema.parse(raw);
+        return Response.json(await prisma.$transaction(async (tx) => {
+          if (data.zoneId) {
+            const zone = await tx.zone.findFirst({ where: { id: data.zoneId, storeId: data.storeId }, select: { id: true } });
+            if (!zone) throw new ApiError(400, "Khu vực phải thuộc cùng cửa hàng với kệ.", "CROSS_STORE_REFERENCE");
+          }
+          return tx.shelf.create({ data });
+        }), { status: 201 });
+      }
       case "zones": return Response.json(await prisma.zone.create({ data: zoneSchema.parse(raw) }), { status: 201 });
-      case "esls": return Response.json(await prisma.eSL.create({ data: eslSchema.parse(raw) }), { status: 201 });
+      case "esls": {
+        const data = eslSchema.parse(raw);
+        return Response.json(await prisma.$transaction(async (tx) => {
+          const shelf = await tx.shelf.findFirst({ where: { id: data.shelfId, storeId: data.storeId }, select: { id: true } });
+          if (!shelf) throw new ApiError(400, "Kệ phải thuộc cùng cửa hàng với ESL.", "CROSS_STORE_REFERENCE");
+          return tx.eSL.create({ data });
+        }), { status: 201 });
+      }
       case "fefo-rules": return Response.json(await prisma.fefoRule.create({ data: ruleSchema.parse(raw) }), { status: 201 });
       case "users": {
         const data = userSchema.parse(raw);

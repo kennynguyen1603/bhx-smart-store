@@ -116,6 +116,14 @@ it("creates users with validated email/password and multiple memberships", async
   await act(async () => field(otherStore.name).click()); await select("Cửa hàng mặc định", otherStore.name); await submit();
   expect(writes[0].body).toEqual({ name: "Người mới", email: "new@example.com", password: "Password123", role: "STAFF", storeIds: [otherStore.id, "store"] });
 });
+it("shows mode-specific password guidance", async () => {
+  await mount("Người dùng"); await click("Tạo tài khoản");
+  expect(dialog().textContent).toContain("Mật khẩu bắt buộc và phải có ít nhất 8 ký tự.");
+  expect(dialog().textContent).not.toContain("Để trống mật khẩu mới để giữ mật khẩu hiện tại.");
+  await click("Hủy", dialog());
+  await openEdit(edits[5]);
+  expect(dialog().textContent).toContain("Để trống mật khẩu mới để giữ mật khẩu hiện tại.");
+});
 it("preserves unavailable persisted memberships and references on edit", async () => {
   data.stores = [referenceStore]; data.products = [data.products[0]];
   await openEdit(edits[5]); await submit(); expect(writes[0].body?.storeIds).toEqual([otherStore.id, "store"]);
@@ -152,6 +160,13 @@ it.each(destructive)("confirms %s %s with resource copy, cancel, one pending wri
   const action = [...confirmDialog.querySelectorAll<HTMLButtonElement>("button")].find(el => el.textContent !== "Hủy")!;
   await act(async () => { action.click(); action.click(); }); expect(writes).toEqual([{ url: `/api/admin/${resource}/${id}`, method: "DELETE" }]); expect(button("Hủy", confirmDialog).disabled).toBe(true); expect(action.disabled).toBe(true);
   await act(async () => release(new Response(null, { status: 204 }))); expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+});
+
+it("warns that only an empty shelf can be deleted", async () => {
+  await mount("Sơ đồ & ESL"); await click("Xoá kệ K-02");
+  const confirmDialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+  expect(confirmDialog.textContent).toContain("Chỉ có thể xoá kệ trống");
+  expect(confirmDialog.textContent).toContain("di chuyển hoặc xoá các dữ liệu phụ thuộc trước");
 });
 
 it("explains and disables all store-dependent creates when no store exists", async () => {

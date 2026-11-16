@@ -18,6 +18,7 @@ function uuid() { return crypto.randomUUID(); }
 function time(value: string) { return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 
 const PUSH_READY_TIMEOUT_MS = 5_000;
+const PUSH_OPERATION_TIMEOUT_MS = 8_000;
 
 class PushSetupError extends Error {}
 
@@ -30,6 +31,22 @@ function waitForServiceWorker(ready: Promise<ServiceWorkerRegistration>) {
     ready.then(
       (registration) => { window.clearTimeout(timeout); resolve(registration); },
       () => { window.clearTimeout(timeout); reject(new PushSetupError("Không thể kết nối Service Worker. Hãy thử lại.")); },
+    );
+  });
+}
+
+function waitForPushOperation<T>(promise: Promise<T>, timeoutMessage: string, failureMessage: string, onTimeout?: () => void) {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      onTimeout?.();
+      reject(new PushSetupError(timeoutMessage));
+    }, PUSH_OPERATION_TIMEOUT_MS);
+    promise.then(
+      (value) => { if (!settled) { settled = true; window.clearTimeout(timeout); resolve(value); } },
+      (error) => { if (!settled) { settled = true; window.clearTimeout(timeout); reject(error instanceof PushSetupError ? error : new PushSetupError(failureMessage)); } },
     );
   });
 }
@@ -49,6 +66,9 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const [loading, setLoading] = useState(true);
   const [pushPending, setPushPending] = useState(false);
   const pushPendingRef = useRef(false);
+  const pushAttemptRef = useRef(0);
+  const pushControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
   const managerOversight = user.role === "MANAGER";
 
   const notify = useCallback((message: string, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast(null), 4200); }, []);
@@ -67,6 +87,16 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   }, [storeId, notify]);
 
   useEffect(() => { const initialLoad = window.setTimeout(() => void load(), 0); const timer = window.setInterval(() => void load(), 15_000); return () => { clearTimeout(initialLoad); clearInterval(timer); }; }, [load]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      pushAttemptRef.current += 1;
+      pushControllerRef.current?.abort();
+      pushControllerRef.current = null;
+      pushPendingRef.current = false;
+    };
+  }, []);
   useEffect(() => {
     const sync = async () => { setOnline(navigator.onLine); if (navigator.onLine) { const result = await flushOfflineMutations(); setQueueCount(result.remaining); if (result.conflicts.length) notify("Một cập nhật offline bị xung đột. Hãy kiểm đếm lại.", true); await load(); } };
     window.addEventListener("online", sync); window.addEventListener("offline", sync); document.addEventListener("visibilitychange", sync);
@@ -114,6 +144,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
 
   async function enablePush() {
     if (pushPendingRef.current) return;
+    const attempt = ++pushAttemptRef.current;
     pushPendingRef.current = true;
     setPushPending(true);
     try {
@@ -129,26 +160,36 @@ export function StaffApp({ user }: { user: Session["user"] }) {
       const registration = await waitForServiceWorker(navigator.serviceWorker.ready);
       if (!registration.pushManager?.subscribe) throw new PushSetupError("Trình duyệt này không hỗ trợ Web Push.");
       const bytes = Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
-      let subscription: PushSubscription;
-      try {
-        subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
-      } catch {
-        throw new PushSetupError("Không thể tạo đăng ký Web Push trên trình duyệt này.");
-      }
-      const response = await fetch("/api/push/subscriptions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(subscription.toJSON()) });
+      const subscription = await waitForPushOperation(
+        registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes }),
+        "Quá thời gian tạo đăng ký Web Push. Hãy thử lại.",
+        "Không thể tạo đăng ký Web Push trên trình duyệt này.",
+      );
+      if (attempt !== pushAttemptRef.current || !mountedRef.current) return;
+      const controller = new AbortController();
+      pushControllerRef.current = controller;
+      const response = await waitForPushOperation(
+        fetch("/api/push/subscriptions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(subscription.toJSON()), signal: controller.signal }),
+        "Quá thời gian lưu đăng ký Web Push. Hãy thử lại.",
+        "Không thể lưu đăng ký Web Push. Hãy thử lại.",
+        () => controller.abort(),
+      );
+      if (attempt !== pushAttemptRef.current || !mountedRef.current) return;
       if (!response.ok) throw new PushSetupError("Không thể lưu đăng ký Web Push. Hãy thử lại.");
       notify("Đã bật Web Push cho thiết bị này.");
     } catch (error) {
-      notify(error instanceof PushSetupError ? error.message : "Không thể bật Web Push trên trình duyệt này.", true);
+      if (attempt === pushAttemptRef.current && mountedRef.current) notify(error instanceof PushSetupError ? error.message : "Không thể bật Web Push trên trình duyệt này.", true);
     } finally {
-      pushPendingRef.current = false;
-      setPushPending(false);
+      if (attempt === pushAttemptRef.current) {
+        pushControllerRef.current = null;
+        pushPendingRef.current = false;
+        if (mountedRef.current) setPushPending(false);
+      }
     }
   }
 
-  async function openTask(task: Task) { setSelected(task); setScanned(false); setScanCode(task.shelf.esls[0]?.code || ""); setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1)); if(["OPEN","BLOCKED"].includes(task.status)) await mutation(`/api/staff/tasks/${task.id}/start`,{clientMutationId:uuid()},"Đã bắt đầu nhiệm vụ."); }
+  async function openTask(task: Task) { setSelected(task); setScanned(false); setScanCode(task.shelf.esls[0]?.code || ""); setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1)); if(!managerOversight && ["OPEN","BLOCKED"].includes(task.status)) await mutation(`/api/staff/tasks/${task.id}/start`,{clientMutationId:uuid()},"Đã bắt đầu nhiệm vụ."); }
   function selectScannedTask(taskSummary: TaskSummary) {
-    if (managerOversight) { notify("Quản lý chỉ có quyền theo dõi nhiệm vụ.", true); return; }
     const task = taskSummary as Task;
     setData((current) => current ? { ...current, tasks: [...current.tasks.filter((item) => item.id !== task.id), task] } : current);
     setTab("tasks");
@@ -167,7 +208,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
         {tab === "history" && <section className="panel"><PanelTitle label="NHẬT KÝ THAO TÁC" title="Hoạt động gần đây" /><div className="log-list">{data?.recentEvents.map((event) => <div className="log-row" key={event.id}><code>{event.type}</code><span><strong>{event.task.product.name}</strong><br />{event.note || event.task.shelf.label}</span><time>{time(event.createdAt)}</time></div>)}</div></section>}
       </section>
       {tab === "scanner" && storeId && <EslScannerModal storeId={storeId} onSelectTask={selectScannedTask} onClose={() => setTab("overview")} />}
-      {selected && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}><section className="modal staff-task-modal"><button className="icon-button modal-close" onClick={() => setSelected(null)} aria-label="Đóng nhiệm vụ"><X /></button><header className="modal-head"><span className="section-label">{selected.type} · {selected.priority}</span><h2>{selected.title}</h2><p>{selected.note}</p></header><div className="modal-body"><div className="product-summary"><span>{selected.product.emoji}</span><span><small>{selected.shelf.label}</small><strong>{selected.product.name}</strong><small>{selected.shelf.code}</small></span><span className={`badge ${selected.status.toLowerCase()}`}>{selected.status}</span></div>{selected.type === "RESTOCK" ? <><div className="detail-grid"><div className="detail-box"><span>Tồn trên kệ</span><strong>{selected.inventory?.onShelf}/{selected.inventory?.capacity}</strong></div><div className="detail-box"><span>Tồn kho sau</span><strong>{selected.inventory?.backroom}</strong></div></div><div className="esl-verification"><BarcodeScanner onDetected={(value) => { setScanCode(value); setScanned(false); }} label="Quét mã ESL" /><div className="manual-scan-label"><span>HOẶC NHẬP MÃ THIẾT BỊ</span><small>Mã được in ở cạnh dưới của nhãn điện tử</small></div><div className="manual-scan"><input className="form-control" value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanned(false); }} placeholder="Ví dụ: ESL-NT-Q5-L-02" aria-label="Mã ESL" /><button className="button" onClick={verifyEsl}>Xác minh</button></div>{scanned && <div className="alert-box scan-success">✓ ESL khớp đúng sản phẩm và vị trí kệ.</div>}</div><label className="muted quantity-label">Số lượng bổ sung<div className="number-control"><button onClick={() => setQuantity(Math.max(1, quantity - 1))} aria-label="Giảm số lượng">−</button><input className="form-control" type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} /><button onClick={() => setQuantity(quantity + 1)} aria-label="Tăng số lượng">+</button></div></label></> : <><div className="detail-grid"><div className="detail-box"><span>Mã lô</span><strong>{selected.lot?.batchCode}</strong></div><div className="detail-box"><span>Hạn sử dụng</span><strong>{selected.lot && new Intl.DateTimeFormat("vi-VN").format(new Date(selected.lot.expiryDate))}</strong></div><div className="detail-box"><span>Nhà cung cấp</span><strong>{selected.lot?.supplier.name}</strong></div><div className="detail-box"><span>Xuất xứ</span><strong>{selected.lot?.origin}</strong></div></div><div className={`alert-box ${selected.type === "QUARANTINE" ? "danger" : ""}`}>{selected.type === "QUARANTINE" ? "Lô đã hết hạn. Di chuyển khỏi khu vực bán và xác nhận cách ly." : "Kiểm tra đúng lô, dán nhãn giảm giá và ưu tiên bán trước."}</div></>}</div><footer className="modal-actions"><button className="button" onClick={() => setSelected(null)}>Để sau</button><button className="button primary" onClick={completeTask}>{selected.type === "RESTOCK" ? "Xác nhận bổ sung" : selected.type === "QUARANTINE" ? "Xác nhận cách ly" : "Xác nhận đã dán nhãn"}</button></footer></section></div>}
+      {selected && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}><section className="modal staff-task-modal"><button className="icon-button modal-close" onClick={() => setSelected(null)} aria-label="Đóng nhiệm vụ"><X /></button><header className="modal-head"><span className="section-label">{selected.type} · {selected.priority}</span><h2>{selected.title}</h2><p>{selected.note}</p></header><div className="modal-body"><div className="product-summary"><span>{selected.product.emoji}</span><span><small>{selected.shelf.label}</small><strong>{selected.product.name}</strong><small>{selected.shelf.code}</small></span><span className={`badge ${selected.status.toLowerCase()}`}>{selected.status}</span></div>{managerOversight && <div className="alert-box">Chế độ chỉ xem. Quản lý không thể bắt đầu hoặc hoàn thành nhiệm vụ.</div>}{selected.type === "RESTOCK" ? <><div className="detail-grid"><div className="detail-box"><span>Tồn trên kệ</span><strong>{selected.inventory?.onShelf}/{selected.inventory?.capacity}</strong></div><div className="detail-box"><span>Tồn kho sau</span><strong>{selected.inventory?.backroom}</strong></div></div>{!managerOversight && <><div className="esl-verification"><BarcodeScanner onDetected={(value) => { setScanCode(value); setScanned(false); }} label="Quét mã ESL" /><div className="manual-scan-label"><span>HOẶC NHẬP MÃ THIẾT BỊ</span><small>Mã được in ở cạnh dưới của nhãn điện tử</small></div><div className="manual-scan"><input className="form-control" value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanned(false); }} placeholder="Ví dụ: ESL-NT-Q5-L-02" aria-label="Mã ESL" /><button className="button" onClick={verifyEsl}>Xác minh</button></div>{scanned && <div className="alert-box scan-success">✓ ESL khớp đúng sản phẩm và vị trí kệ.</div>}</div><label className="muted quantity-label">Số lượng bổ sung<div className="number-control"><button onClick={() => setQuantity(Math.max(1, quantity - 1))} aria-label="Giảm số lượng">−</button><input className="form-control" type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} /><button onClick={() => setQuantity(quantity + 1)} aria-label="Tăng số lượng">+</button></div></label></>}</> : <><div className="detail-grid"><div className="detail-box"><span>Mã lô</span><strong>{selected.lot?.batchCode}</strong></div><div className="detail-box"><span>Hạn sử dụng</span><strong>{selected.lot && new Intl.DateTimeFormat("vi-VN").format(new Date(selected.lot.expiryDate))}</strong></div><div className="detail-box"><span>Nhà cung cấp</span><strong>{selected.lot?.supplier.name}</strong></div><div className="detail-box"><span>Xuất xứ</span><strong>{selected.lot?.origin}</strong></div></div>{!managerOversight && <div className={`alert-box ${selected.type === "QUARANTINE" ? "danger" : ""}`}>{selected.type === "QUARANTINE" ? "Lô đã hết hạn. Di chuyển khỏi khu vực bán và xác nhận cách ly." : "Kiểm tra đúng lô, dán nhãn giảm giá và ưu tiên bán trước."}</div>}</>}</div>{!managerOversight && <footer className="modal-actions"><button className="button" onClick={() => setSelected(null)}>Để sau</button><button className="button primary" onClick={completeTask}>{selected.type === "RESTOCK" ? "Xác nhận bổ sung" : selected.type === "QUARANTINE" ? "Xác nhận cách ly" : "Xác nhận đã dán nhãn"}</button></footer>}</section></div>}
       {toast && <div className="toast-stack"><div className={`toast ${toast.error ? "error" : ""}`}><strong>{toast.error ? "Có lỗi" : "Đã cập nhật"}</strong>{toast.message}</div></div>}
     </main>
   );

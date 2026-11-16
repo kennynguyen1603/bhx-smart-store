@@ -33,13 +33,31 @@ const destructiveActions = {
   supplier: { action: "deactivate", title: "Vô hiệu hoá nhà cung cấp", description: "Nhà cung cấp sẽ ngừng hoạt động.", confirmLabel: "Vô hiệu hoá" },
   lot: { action: "close", title: "Đóng lô hàng", description: "Số lượng lô sẽ về 0 và trạng thái chuyển thành đã hết.", confirmLabel: "Đóng lô" },
   zone: { action: "delete", title: "Xoá khu vực", description: "Khu vực sẽ bị xoá khỏi sơ đồ cửa hàng.", confirmLabel: "Xoá khu vực" },
-  shelf: { action: "delete", title: "Xoá kệ", description: "Kệ sẽ bị xoá khỏi sơ đồ cửa hàng.", confirmLabel: "Xoá kệ" },
+  shelf: { action: "delete", title: "Xoá kệ", description: "Chỉ có thể xoá kệ trống. Hãy di chuyển hoặc xoá các dữ liệu phụ thuộc trước.", confirmLabel: "Xoá kệ" },
   esl: { action: "detach", title: "Gỡ ESL khỏi kệ", description: "Liên kết thiết bị ESL với kệ và sản phẩm sẽ bị xoá.", confirmLabel: "Gỡ ESL" },
   "fefo-rule": { action: "delete", title: "Xoá quy tắc FEFO", description: "Quy tắc giảm giá hoặc cách ly này sẽ bị xoá.", confirmLabel: "Xoá quy tắc" },
   user: { action: "lock", title: "Khoá tài khoản", description: "Tài khoản sẽ bị vô hiệu hoá và không thể đăng nhập.", confirmLabel: "Khoá tài khoản" },
 } as const satisfies Record<Exclude<AdminDialogDescriptor["kind"], "inventory">, Omit<AdminConfirmDescriptor, "kind" | "id">>;
 type Tab = "overview" | "inventory" | "catalog" | "map" | "fefo" | "users" | "integrations";
 type IntegrationMode = "POS" | "WMS" | "SUPPLIER" | "FEFO";
+const ADMIN_REQUEST_TIMEOUT_MS = 10_000;
+
+class AdminRequestTimeoutError extends Error {}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, controller: AbortController) {
+  let timeout = 0;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = window.setTimeout(() => {
+      controller.abort();
+      reject(new AdminRequestTimeoutError());
+    }, ADMIN_REQUEST_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([fetch(input, { ...init, signal: controller.signal }), timeoutPromise]);
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 export function AdminApp({ user }: { user: Session["user"] }) {
   const [data, setData] = useState<Overview | null>(null);
@@ -51,23 +69,46 @@ export function AdminApp({ user }: { user: Session["user"] }) {
   const [dragShelf, setDragShelf] = useState<string | null>(null);
   const [integrationPending, setIntegrationPending] = useState<IntegrationMode | null>(null);
   const integrationPendingLock = useRef<IntegrationMode | null>(null);
+  const integrationGeneration = useRef(0);
+  const integrationOperationIds = useRef<Partial<Record<IntegrationMode, string>>>({});
+  const requestControllers = useRef(new Set<AbortController>());
+  const mountedRef = useRef(true);
   const canAdmin = user.role === "ADMIN";
   const notify = useCallback((message: string, error = false) => { if (error) toast.error(message); else toast.success(message); }, []);
   const load = useCallback(async (afterWrite = false) => {
-    setLoading(true);
+    if (mountedRef.current) setLoading(true);
+    const controller = new AbortController();
+    requestControllers.current.add(controller);
     try {
-      const response = await fetch(`/api/admin/overview${storeId ? `?storeId=${storeId}` : ""}`, { cache: "no-store" });
+      const response = await fetchWithTimeout(`/api/admin/overview${storeId ? `?storeId=${storeId}` : ""}`, { cache: "no-store" }, controller);
       if (!response.ok) throw new Error("Overview refresh failed");
       const result: Overview = await response.json();
+      if (!mountedRef.current) return false;
       setData(result);
       if (!storeId && result.selectedStoreId) setStoreId(result.selectedStoreId);
       return true;
-    } catch {
-      notify(afterWrite ? "Đã lưu thay đổi nhưng không thể tải lại dữ liệu. Vui lòng tải lại dữ liệu." : "Không thể tải dữ liệu quản trị. Vui lòng thử lại.", true);
+    } catch (error) {
+      if (mountedRef.current) notify(afterWrite
+        ? error instanceof AdminRequestTimeoutError ? "Đã lưu thay đổi nhưng quá thời gian tải lại dữ liệu. Vui lòng tải lại dữ liệu." : "Đã lưu thay đổi nhưng không thể tải lại dữ liệu. Vui lòng tải lại dữ liệu."
+        : error instanceof AdminRequestTimeoutError ? "Quá thời gian tải dữ liệu quản trị. Vui lòng thử lại." : "Không thể tải dữ liệu quản trị. Vui lòng thử lại.", true);
       return false;
-    } finally { setLoading(false); }
+    } finally {
+      requestControllers.current.delete(controller);
+      if (mountedRef.current) setLoading(false);
+    }
   }, [storeId, notify]);
   useEffect(() => { const initialLoad = window.setTimeout(() => void load(), 0); return () => clearTimeout(initialLoad); }, [load]);
+  useEffect(() => {
+    mountedRef.current = true;
+    const controllers = requestControllers.current;
+    return () => {
+      mountedRef.current = false;
+      integrationGeneration.current += 1;
+      integrationPendingLock.current = null;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+    };
+  }, []);
   const store = data?.stores.find((item) => item.id === storeId) || data?.stores[0];
   const lowCount = data?.inventories.filter((item) => item.onShelf <= item.lowThreshold).length || 0;
   const referenceTime = data ? new Date(data.generatedAt).getTime() : 0;
@@ -109,13 +150,36 @@ export function AdminApp({ user }: { user: Session["user"] }) {
     if (integrationPendingLock.current) return;
     const inventory = data?.inventories[0];
     if (mode !== "FEFO" && !inventory) return;
+    const generation = ++integrationGeneration.current;
+    const operationId = integrationOperationIds.current[mode] || crypto.randomUUID();
+    integrationOperationIds.current[mode] = operationId;
     integrationPendingLock.current = mode;
     setIntegrationPending(mode);
+    const controller = new AbortController();
+    requestControllers.current.add(controller);
     try {
-      await api("/api/admin/simulate", "POST", { mode, inventoryId: inventory?.id, quantity: mode === "POS" ? 2 : 10 });
+      const response = await fetchWithTimeout("/api/admin/simulate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, inventoryId: inventory?.id, quantity: mode === "POS" ? 2 : 10, operationId }) }, controller);
+      const result = await response.json().catch(() => null);
+      if (generation !== integrationGeneration.current || !mountedRef.current) return;
+      if (!response.ok) {
+        const inProgress = result?.error?.code === "OPERATION_IN_PROGRESS";
+        if (!inProgress) delete integrationOperationIds.current[mode];
+        notify(result?.error?.message || "Mô phỏng thất bại", true);
+        return;
+      }
+      delete integrationOperationIds.current[mode];
+      notify("Đã cập nhật dữ liệu.");
+      await load(true);
+    } catch (error) {
+      if (generation === integrationGeneration.current && mountedRef.current) notify(error instanceof AdminRequestTimeoutError
+        ? "Không xác định được kết quả mô phỏng do quá thời gian. Hãy thử lại để kiểm tra cùng thao tác."
+        : "Không thể kết nối đến máy chủ. Không xác định được kết quả mô phỏng; hãy thử lại để kiểm tra cùng thao tác.", true);
     } finally {
-      integrationPendingLock.current = null;
-      setIntegrationPending(null);
+      requestControllers.current.delete(controller);
+      if (generation === integrationGeneration.current) {
+        integrationPendingLock.current = null;
+        if (mountedRef.current) setIntegrationPending(null);
+      }
     }
   }
   function createStore() { setDialog({ kind: "store", mode: "create", defaultValues: {} }); }

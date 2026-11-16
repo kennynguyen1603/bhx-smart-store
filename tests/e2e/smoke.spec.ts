@@ -457,6 +457,55 @@ test("ESL scanner handles zero, one, many, and inaccessible store results", asyn
   }
 });
 
+test("Manager opens single and multi-task ESL results read-only without mutation requests", async ({ page }) => {
+  test.setTimeout(120_000);
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const [singleEsl, multiEsl] = await Promise.all([
+    prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-NT-Q5-T-03" } }),
+    prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-NT-Q5-T-05" } }),
+  ]);
+  const affectedTasks = await prisma.task.findMany({
+    where: { OR: [singleEsl, multiEsl].map((esl) => ({ storeId: esl.storeId, shelfId: esl.shelfId, productId: esl.productId })) },
+    select: { id: true, status: true, assigneeId: true, completedAt: true },
+  });
+  const createdIds: string[] = [];
+  const mutationRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET" && /\/api\/staff\/tasks\/.+\/(start|restock|fefo)$/.test(new URL(request.url()).pathname)) mutationRequests.push(request.url());
+  });
+
+  try {
+    await prisma.task.updateMany({ where: { id: { in: affectedTasks.map((task) => task.id) } }, data: { status: "COMPLETED", completedAt: new Date() } });
+    const single = await prisma.task.create({ data: { storeId: singleEsl.storeId, shelfId: singleEsl.shelfId, productId: singleEsl.productId, type: "RESTOCK", status: "OPEN", title: `Manager single ESL ${Date.now()}` } });
+    const multiple = await Promise.all(["RESTOCK", "FEFO"].map((type, index) => prisma.task.create({ data: { storeId: multiEsl.storeId, shelfId: multiEsl.shelfId, productId: multiEsl.productId, type: type as "RESTOCK" | "FEFO", status: index ? "BLOCKED" : "OPEN", title: `Manager multi ESL ${index + 1} ${Date.now()}` } })));
+    createdIds.push(single.id, ...multiple.map((task) => task.id));
+
+    await authenticateStaffApp(page, "manager@demo.bhx");
+    await page.getByRole("button", { name: "Quét ESL" }).click();
+    await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill(singleEsl.code);
+    await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
+    await expect(page.getByRole("heading", { name: single.title })).toBeVisible();
+    await expect(page.getByText("Chế độ chỉ xem")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Xác nhận bổ sung" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Xác minh" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Đóng nhiệm vụ" }).click();
+
+    await page.getByRole("button", { name: "Quét ESL" }).click();
+    await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill(multiEsl.code);
+    await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
+    const choices = page.locator(".esl-task-choices");
+    await choices.getByRole("button", { name: new RegExp(multiple[1].title) }).click();
+    await expect(page.getByRole("heading", { name: multiple[1].title })).toBeVisible();
+    await expect(page.getByText("Chế độ chỉ xem")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Xác nhận/ })).toHaveCount(0);
+    expect(mutationRequests).toEqual([]);
+  } finally {
+    await prisma.task.deleteMany({ where: { id: { in: createdIds } } });
+    for (const { id, ...data } of affectedTasks) await prisma.task.update({ where: { id }, data });
+  }
+});
+
 test("ESL lookup uses the newest response and opens a task missing from stale polling", async ({ page }) => {
   test.setTimeout(120_000);
   nextEnv.loadEnvConfig(process.cwd());
