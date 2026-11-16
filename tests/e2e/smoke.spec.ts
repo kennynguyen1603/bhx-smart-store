@@ -651,33 +651,48 @@ for (const [role, account] of [["Staff", "staff@demo.bhx"], ["Manager", "manager
   });
 }
 
-test("mobile notification remains topmost and clickable at supported widths", async ({ page }) => {
+test("mobile notification remains topmost and enables push only through explicit two-phase setup", async ({ page }) => {
   test.setTimeout(60_000);
   await page.addInitScript(() => {
+    const permissionState = { calls: 0, hadGesture: false };
+    Object.assign(window, { pushPermissionState: permissionState });
     Object.defineProperty(window, "Notification", {
       configurable: true,
-      value: { permission: "granted", requestPermission: async () => "granted" },
+      value: { permission: "default", requestPermission: async () => {
+        permissionState.calls += 1;
+        permissionState.hadGesture = navigator.userActivation.isActive;
+        return "granted";
+      } },
     });
     Object.defineProperty(window, "PushManager", { configurable: true, value: function PushManager() {} });
+    const registration = {
+      active: { state: "activated", scriptURL: new URL("/sw.js", location.href).href },
+      pushManager: {
+        getSubscription: async () => null,
+        subscribe: async () => ({
+          toJSON: () => ({ endpoint: "https://push.example/mobile", keys: { auth: "auth", p256dh: "key" } }),
+        }),
+      },
+    };
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
       value: {
-        getRegistrations: async () => [],
-        ready: Promise.resolve({
-          pushManager: {
-            subscribe: async () => ({
-              toJSON: () => ({ endpoint: "https://push.example/mobile", keys: { auth: "auth", p256dh: "key" } }),
-            }),
-          },
-        }),
+        getRegistration: async () => registration,
       },
     });
   });
 
   let pushPosts = 0;
+  let readinessGets = 0;
   let releaseFirstPost!: () => void;
   const firstPostGate = new Promise<void>((resolve) => { releaseFirstPost = resolve; });
   await page.route("**/api/push/subscriptions", async (route) => {
+    if (route.request().method() === "GET") {
+      readinessGets += 1;
+      await route.fulfill({ json: { configured: true, publicKey: "AQID" } });
+      return;
+    }
+    expect(route.request().method()).toBe("POST");
     pushPosts += 1;
     if (pushPosts === 1) await firstPostGate;
     await route.fulfill({ status: 201, json: { ok: true } });
@@ -687,6 +702,7 @@ test("mobile notification remains topmost and clickable at supported widths", as
 
   for (const [index, width] of [320, 390, 760].entries()) {
     await page.setViewportSize({ width, height: 844 });
+    await page.reload();
     const notification = page.locator(".notification-button");
     await expect(notification).toBeVisible();
     await expect(notification).toBeEnabled();
@@ -715,21 +731,37 @@ test("mobile notification remains topmost and clickable at supported widths", as
     expect(layout.topmost).toBe(true);
 
     await page.mouse.click(layout.center.x, layout.center.y);
+    const dialog = page.getByRole("dialog", { name: "Thông báo", exact: true });
+    await expect(dialog).toBeVisible();
+    expect(pushPosts).toBe(index);
+    expect(readinessGets).toBe(index);
+    const permissionState = () => page.evaluate(() => (window as typeof window & { pushPermissionState: { calls: number; hadGesture: boolean } }).pushPermissionState);
+    expect(await permissionState()).toEqual({ calls: 0, hadGesture: false });
+    await dialog.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true }).click();
+    const allow = dialog.getByRole("button", { name: "Cho phép thông báo trên thiết bị", exact: true });
+    await expect(allow).toBeVisible();
+    expect(readinessGets).toBe(index + 1);
+    expect(pushPosts).toBe(index);
+    expect(await permissionState()).toEqual({ calls: 0, hadGesture: false });
+    await allow.click();
     await expect.poll(() => pushPosts).toBe(index + 1);
+    expect(await permissionState()).toEqual({ calls: 1, hadGesture: true });
     if (index === 0) {
       await expect(page.getByRole("button", { name: "Đang bật thông báo" })).toBeDisabled();
-      await expect(notification.locator(".spin")).toBeVisible();
+      await expect(dialog.locator(".spin")).toBeVisible();
       expect(await page.getByText("Đã bật Web Push cho thiết bị này.").count()).toBe(0);
       releaseFirstPost();
     }
     await expect(page.getByText("Đã bật Web Push cho thiết bị này.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Bật thông báo" })).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(notification).toBeEnabled();
   }
 });
 
 test("admin can sign in and open store operations", async ({ page }) => {
   await page.goto("/login?callbackUrl=/admin");
-  await page.getByRole("button", { name: "Admin", exact: true }).click();
+  await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
   await page.locator('input[type="password"]').fill("Demo@123");
   await page.getByRole("button", { name: /Đăng nhập/i }).click();
   await expect(page).toHaveURL(/\/admin$/);
@@ -754,7 +786,7 @@ test.describe("Admin core forms", () => {
       await route.fulfill(failWrite ? { status: 500, json: { error: { message: "Máy chủ từ chối cập nhật" } } } : { json: { id: "saved" } });
     });
     await page.goto("/login?callbackUrl=/admin");
-    await page.getByRole("button", { name: "Admin", exact: true }).click();
+    await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
     await page.locator('input[type="password"]').fill("Demo@123");
     await page.getByRole("button", { name: /Đăng nhập/i }).click();
     await expect(page).toHaveURL(/\/admin$/);
@@ -822,7 +854,7 @@ test.describe("Admin core forms", () => {
     });
     await page.route("**/api/admin/products", async (route) => { writeCount++; failRefresh = true; await route.fulfill({ json: { id: "new-product" }, status: 201 }); });
     await page.goto("/login?callbackUrl=/admin");
-    await page.getByRole("button", { name: "Admin", exact: true }).click();
+    await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
     await page.locator('input[type="password"]').fill("Demo@123");
     await page.getByRole("button", { name: /Đăng nhập/i }).click();
     await expect(page).toHaveURL(/\/admin$/);
@@ -847,7 +879,7 @@ test.describe("Admin core forms", () => {
 
 async function signInAdmin(page: Page) {
   await page.goto("/login?callbackUrl=/admin");
-  await page.getByRole("button", { name: "Admin", exact: true }).click();
+  await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
   await page.locator('input[type="password"]').fill("Demo@123");
   await page.getByRole("button", { name: /Đăng nhập/i }).click();
   await expect(page).toHaveURL(/\/admin$/);

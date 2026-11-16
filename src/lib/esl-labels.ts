@@ -3,7 +3,7 @@ import { TaskStatus } from "@/generated/prisma/enums";
 import { prisma } from "@/lib/db";
 
 export type EslTaskBadge = "RESTOCK" | "FEFO" | "QUARANTINE";
-export type QrEncoder = (code: string, options: { errorCorrectionLevel: "M"; width: number; margin: number }) => Promise<string>;
+export type QrEncoder = (code: string, options: { errorCorrectionLevel: "M"; width: number; margin: number; maskPattern: 0 }) => Promise<string>;
 export type LabelStoreOption = { id: string; code: string; name: string };
 export type EslLabelRecord = {
   id: string;
@@ -29,7 +29,9 @@ export async function encodeEslLabelQr(
   encoder: QrEncoder = (value, options) => QRCode.toDataURL(value, options),
 ): Promise<{ dataUrl: string; error: string }> {
   try {
-    return { dataUrl: await encoder(code, { errorCorrectionLevel: "M", width: 320, margin: 2 }), error: "" };
+    // Automatic mask 2 for ESL-LVV-TD-D-13 confuses the scanner's finder detection.
+    // Mask 0 keeps the same payload, dimensions and correction level and scans reliably.
+    return { dataUrl: await encoder(code, { errorCorrectionLevel: "M", width: 320, margin: 2, maskPattern: 0 }), error: "" };
   } catch {
     return { dataUrl: "", error: "Không thể tạo mã QR lúc này. Hãy dùng mã ESL bên dưới để nhập thủ công." };
   }

@@ -55,7 +55,7 @@ describe("encodeEslLabelQr", () => {
   it("passes the raw code unchanged with M error correction", async () => {
     const encoder = vi.fn().mockResolvedValue("data:image/png;base64,UVI=");
     expect(await encodeEslLabelQr("  ESL-NT-Q5-L-02  ", encoder)).toEqual({ dataUrl: "data:image/png;base64,UVI=", error: "" });
-    expect(encoder).toHaveBeenCalledExactlyOnceWith("  ESL-NT-Q5-L-02  ", { errorCorrectionLevel: "M", width: 320, margin: 2 });
+    expect(encoder).toHaveBeenCalledExactlyOnceWith("  ESL-NT-Q5-L-02  ", { errorCorrectionLevel: "M", width: 320, margin: 2, maskPattern: 0 });
   });
 
   it.each(["reject", "throw"])("contains an encoder %s with a manual-code instruction", async (failure) => {

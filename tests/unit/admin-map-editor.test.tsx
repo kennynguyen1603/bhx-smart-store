@@ -149,6 +149,18 @@ describe("AdminMapEditor", () => {
     await render(); await pointer("pointerdown", 250, 350); await pointer("pointermove", 350, 650); await pointer(type, 350, 650); await pointer("pointerup", 350, 650);
     expect(onMove).not.toHaveBeenCalled(); position("12.5%", `${1 / 6 * 100}%`);
   });
+  it.each(["pointercancel", "lostpointercapture"])("keeps keyboard activation after %s", async (type) => {
+    await render(); await pointer("pointerdown", 250, 350); await pointer("pointermove", 350, 650); await pointer(type, 350, 650);
+    await click(shelf());
+    expect(shelf().getAttribute("aria-pressed")).toBe("true");
+    expect(onMove).not.toHaveBeenCalled();
+  });
+  it("rejects an occupied target reached through the overlaid shelf handle", async () => {
+    await render(); await click(shelf());
+    await click(host.querySelector<HTMLButtonElement>('button[aria-label="Kệ B-01"]')!);
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Vị trí này đã có kệ khác.");
+    expect(onMove).not.toHaveBeenCalled();
+  });
   it("does not release capture again after the browser has already lost it", async () => {
     await render(); await pointer("pointerdown", 250, 350); await pointer("pointermove", 350, 650);
     captured.clear();

@@ -132,7 +132,8 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
 
   function pointerCancel(event: PointerEvent<HTMLButtonElement>) {
     if (gesture.current?.pointerId !== event.pointerId) return;
-    suppressClick.current = gesture.current.dragging;
+    // A cancelled pointer produces no click; do not consume the next keyboard activation.
+    suppressClick.current = false;
     cancelGesture();
   }
 
@@ -156,6 +157,10 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
           onClick={() => {
             if (suppressClick.current) { suppressClick.current = false; return; }
             if (!canEdit || pendingLock.current) return;
+            if (selectedRef.current && selectedRef.current !== shelf.id) {
+              void move(selectedRef.current, { x: shelf.x, y: shelf.y });
+              return;
+            }
             setError(""); select(selectedRef.current === shelf.id ? null : shelf.id);
           }}>{shelf.code}<small>{shelf.esls.some((esl) => esl.ledOn) ? " 🔴" : " 🟢"}</small></button>;
       })}
