@@ -53,11 +53,16 @@ describe.each(["search", "detail"] as const)("%s product pricing", (route) => {
     ["Asia/Ho_Chi_Minh", 32_600],
     ["UTC", 26_080],
     ["", 32_600],
-    ["invalid/timezone", 32_600],
   ])("prices the response using persisted store timezone %j", async (timeZone, expectedPrice) => {
     provideStore(timeZone);
     provideLots([lot("2026-11-16")]);
     expect((await responseProduct(route)).priceVnd).toBe(expectedPrice);
+  });
+
+  it("propagates a non-empty invalid persisted timezone rather than silently pricing in the default zone", async () => {
+    provideStore("invalid/timezone");
+    provideLots([lot("2026-11-16")]);
+    await expect(responseProduct(route)).rejects.toThrow(RangeError);
   });
 
   it("keeps the request's initial store day when a database lookup crosses midnight", async () => {

@@ -22,7 +22,10 @@ describe("daysUntilStoreDate", () => {
     expect(daysUntilStoreDate(new Date(date), new Date(now), timeZone)).toBe(expected);
   });
 
-  it.each(["", "   ", "not/a-timezone"])("uses the store default for invalid timezone %j", (timeZone) => {
+  it.each(["", "   "])("uses the store default for empty timezone %j", (timeZone) => {
     expect(daysUntilStoreDate(new Date("2026-11-16"), new Date("2026-11-15T17:30:00Z"), timeZone)).toBe(0);
+  });
+  it("rejects a non-empty invalid persisted timezone", () => {
+    expect(() => daysUntilStoreDate(new Date("2026-11-16"), new Date("2026-11-15T17:30:00Z"), "not/a-timezone")).toThrow(RangeError);
   });
 });

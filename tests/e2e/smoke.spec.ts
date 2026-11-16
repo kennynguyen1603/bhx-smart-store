@@ -31,6 +31,42 @@ test("customer kiosk can search and open a product route", async ({ page }) => {
   await expect(page.getByText("TRUY XUẤT NGUỒN GỐC")).toBeVisible();
 });
 
+test("HID barcode immediately after bootstrap opens detail from the autofocused search input once", async ({ page }) => {
+  const searches: URL[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/kiosk/products/search") searches.push(url);
+  });
+  await page.goto("/kiosk");
+  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await expect(page.getByPlaceholder(/Tìm sữa/i)).toBeFocused();
+  await page.keyboard.type("8934673574211");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".product-detail-info").getByRole("heading", { name: "Sữa tươi Vinamilk 100% 1L" })).toBeVisible();
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  expect(searches).toHaveLength(1);
+  expect(searches[0].searchParams.get("q")).toBe("8934673574211");
+  expect(searches[0].searchParams.get("exact")).toBe("1");
+});
+
+test("human typing and Enter in the search input keeps ordinary search", async ({ page }) => {
+  const searches: URL[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/kiosk/products/search") searches.push(url);
+  });
+  await page.goto("/kiosk");
+  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await expect(page.getByPlaceholder(/Tìm sữa/i)).toBeFocused();
+  await page.keyboard.type("sua tuoi", { delay: 80 });
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".product-card")).toHaveCount(1);
+  await expect(page.locator(".map-modal")).toHaveCount(0);
+  expect(searches).toHaveLength(1);
+  expect(searches[0].searchParams.get("q")).toBe("sua tuoi");
+  expect(searches[0].searchParams.has("exact")).toBe(false);
+});
+
 test("printed product barcode opens the kiosk product detail and map", async ({ page }) => {
   await page.goto("/kiosk");
   await expect(page.getByRole("combobox")).not.toHaveValue("");
@@ -97,8 +133,6 @@ test("custom ESL at kiosk retains a second shelf through detail map and cache", 
   const secondShelf = await prisma.shelf.findFirstOrThrow({ where: { storeId: store.id, code: "L-04" } });
   const extraInventory = await prisma.inventory.create({ data: { storeId: store.id, productId: product.id, shelfId: secondShelf.id, onShelf: 5, backroom: 0, capacity: 18, lowThreshold: 2 } });
   const customCode = `CUSTOM-LABEL-${Date.now()}`;
-  // Keep duplicate development bootstrap effects on this fixture's selected store.
-  await page.route("**/api/kiosk/bootstrap", (route) => route.fulfill({ json: { stores: [{ id: store.id, code: store.code, name: store.name, address: store.address }], categories: [] } }));
   const detailShelves: (string | null)[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());

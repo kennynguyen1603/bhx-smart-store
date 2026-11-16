@@ -34,6 +34,7 @@ export function KioskApp() {
   const [detailError, setDetailError] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [seconds, setSeconds] = useState(120);
+  const searchInput = useRef<HTMLInputElement>(null);
   const scannerBuffer = useRef("");
   const scannerTimer = useRef<number | null>(null);
   const detailRequest = useRef(0);
@@ -98,7 +99,15 @@ export function KioskApp() {
     if (openExact && result.products?.length === 1) await openProduct(result.products[0]);
   }, [openProduct, query, resetSession, storeCode]);
 
-  useEffect(() => { fetch("/api/kiosk/bootstrap").then((response) => response.json()).then((data) => { setBootstrap(data); if (data.stores[0]) setStoreCode(data.stores[0].code); }); }, []);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/kiosk/bootstrap").then((response) => response.json()).then((data) => {
+      if (!active) return;
+      setBootstrap(data);
+      if (data.stores[0]) setStoreCode(data.stores[0].code);
+    });
+    return () => { active = false; };
+  }, []);
   useEffect(() => { const timer = window.setInterval(() => setSeconds((value) => value <= 1 ? (home(true), 120) : value - 1), 1000); return () => clearInterval(timer); }, [home]);
   useEffect(() => {
     const reset = () => resetSession();
@@ -107,9 +116,26 @@ export function KioskApp() {
   }, [resetSession]);
   useEffect(() => {
     const hid = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement)?.matches("input,textarea")) return;
-      if (event.key === "Enter" && scannerBuffer.current.length >= 6) { const barcode = scannerBuffer.current; scannerBuffer.current = ""; search(barcode, true); return; }
-      if (event.key.length === 1) { scannerBuffer.current += event.key; if (scannerTimer.current) clearTimeout(scannerTimer.current); scannerTimer.current = window.setTimeout(() => { scannerBuffer.current = ""; }, 120); }
+      const target = event.target as HTMLElement;
+      if (target?.matches("input,textarea,[contenteditable=true]") && target !== searchInput.current) return;
+      if (event.ctrlKey || event.altKey || event.metaKey) { scannerBuffer.current = ""; return; }
+      if (event.key === "Enter" && scannerBuffer.current.length >= 6) {
+        // Cancel the search form's default submit so a HID scan issues one exact request.
+        event.preventDefault();
+        const barcode = scannerBuffer.current;
+        scannerBuffer.current = "";
+        if (scannerTimer.current) clearTimeout(scannerTimer.current);
+        setQuery(barcode);
+        void search(barcode, true);
+        return;
+      }
+      if (event.key.length === 1) {
+        scannerBuffer.current += event.key;
+        if (scannerTimer.current) clearTimeout(scannerTimer.current);
+        // Focused text entry needs a tighter scanner cadence than the global HID target.
+        const gap = target === searchInput.current ? 50 : 120;
+        scannerTimer.current = window.setTimeout(() => { scannerBuffer.current = ""; }, gap);
+      } else if (event.key !== "Shift") scannerBuffer.current = "";
     };
     window.addEventListener("keydown", hid); return () => window.removeEventListener("keydown", hid);
   }, [search]);
@@ -124,7 +150,7 @@ export function KioskApp() {
     <main className="kiosk-page">
       <header className="kiosk-header"><button onClick={() => home()} style={{border:0,background:"transparent"}}><Logo /></button><div className="kiosk-location"><MapPin /><span><small>BẠN ĐANG Ở</small><strong>{store?.name || "Đang tải cửa hàng"}</strong></span></div><div className="kiosk-actions"><select className="form-control" value={storeCode} onChange={(e) => { detailCache.clearStore(storeCode); setStoreCode(e.target.value); home(); }}>{bootstrap?.stores.map((item) => <option value={item.code} key={item.code}>{item.name}</option>)}</select><Link className="button" href="/"><Home /> Thoát</Link></div></header>
       <section className="kiosk-main">
-        {!results ? <><div className="kiosk-intro"><span className="eyebrow">TÌM HÀNG NHANH HƠN</span><h1>Bạn đang tìm<br /><em>sản phẩm nào?</em></h1><p>Quét barcode bằng máy quét hoặc nhập tên để được chỉ đường đến đúng kệ hàng.</p></div><form className="kiosk-search" onSubmit={submit}><Search /><input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus placeholder="Tìm sữa, trái cây, mì gói…" /><button type="button" className="button" onClick={()=>setCameraOpen(true)}><ScanLine/>Quét</button><button className="button primary" disabled={searchLoading || !storeCode}>{searchLoading ? "Đang tìm…" : "Tìm kiếm"}</button></form><div className="category-grid">{bootstrap?.categories.map((category) => <button key={category} disabled={!storeCode} onClick={() => search("", false, category)}><span style={{display:"block",fontSize:25,marginBottom:7}}>{categoryEmoji[category] || "🛒"}</span>{category}</button>)}</div><div className="kiosk-scanner-hint" style={{textAlign:"center",color:"var(--muted)"}}><Barcode style={{verticalAlign:"middle",marginRight:6}} />Scanner HID sẵn sàng · Quét mã và nhấn Enter</div></> : <><button className="button ghost" onClick={() => home()}><ArrowLeft /> Quay lại</button><header className="panel-header" style={{marginTop:20}}><div><span className="section-label">KẾT QUẢ TÌM KIẾM</span><h2>{heading}</h2><p>{products.length} sản phẩm phù hợp tại {store?.name}</p></div></header><div className="product-grid">{products.map((product) => <button className="product-card" onClick={() => openProduct(product)} onMouseEnter={() => prefetchProduct(product)} onFocus={() => prefetchProduct(product)} onTouchStart={() => prefetchProduct(product)} key={product.id}><span className="product-emoji">{product.emoji}</span><span><small>{product.category}</small><strong>{product.name}</strong><ProductPrice product={product} /><span className="product-location"><MapPin style={{width:12,verticalAlign:"middle"}} /> {product.shelf.label} · {product.shelf.zone}</span><span className={`availability ${product.availability}`}>{product.availabilityLabel}</span></span></button>)}{!products.length && <div className="empty-state">{scanMiss ? "Không nhận diện được mã sản phẩm hoặc ESL tại cửa hàng này." : "Không tìm thấy sản phẩm phù hợp. Hãy thử từ khoá ngắn hơn."}</div>}</div></>}
+        {!results ? <><div className="kiosk-intro"><span className="eyebrow">TÌM HÀNG NHANH HƠN</span><h1>Bạn đang tìm<br /><em>sản phẩm nào?</em></h1><p>Quét barcode bằng máy quét hoặc nhập tên để được chỉ đường đến đúng kệ hàng.</p></div><form className="kiosk-search" onSubmit={submit}><Search /><input ref={searchInput} value={query} onChange={(e) => setQuery(e.target.value)} autoFocus placeholder="Tìm sữa, trái cây, mì gói…" /><button type="button" className="button" onClick={()=>setCameraOpen(true)}><ScanLine/>Quét</button><button className="button primary" disabled={searchLoading || !storeCode}>{searchLoading ? "Đang tìm…" : "Tìm kiếm"}</button></form><div className="category-grid">{bootstrap?.categories.map((category) => <button key={category} disabled={!storeCode} onClick={() => search("", false, category)}><span style={{display:"block",fontSize:25,marginBottom:7}}>{categoryEmoji[category] || "🛒"}</span>{category}</button>)}</div><div className="kiosk-scanner-hint" style={{textAlign:"center",color:"var(--muted)"}}><Barcode style={{verticalAlign:"middle",marginRight:6}} />Scanner HID sẵn sàng · Quét mã và nhấn Enter</div></> : <><button className="button ghost" onClick={() => home()}><ArrowLeft /> Quay lại</button><header className="panel-header" style={{marginTop:20}}><div><span className="section-label">KẾT QUẢ TÌM KIẾM</span><h2>{heading}</h2><p>{products.length} sản phẩm phù hợp tại {store?.name}</p></div></header><div className="product-grid">{products.map((product) => <button className="product-card" onClick={() => openProduct(product)} onMouseEnter={() => prefetchProduct(product)} onFocus={() => prefetchProduct(product)} onTouchStart={() => prefetchProduct(product)} key={product.id}><span className="product-emoji">{product.emoji}</span><span><small>{product.category}</small><strong>{product.name}</strong><ProductPrice product={product} /><span className="product-location"><MapPin style={{width:12,verticalAlign:"middle"}} /> {product.shelf.label} · {product.shelf.zone}</span><span className={`availability ${product.availability}`}>{product.availabilityLabel}</span></span></button>)}{!products.length && <div className="empty-state">{scanMiss ? "Không nhận diện được mã sản phẩm hoặc ESL tại cửa hàng này." : "Không tìm thấy sản phẩm phù hợp. Hãy thử từ khoá ngắn hơn."}</div>}</div></>}
       </section>
       <div className="kiosk-session-timer" style={{position:"fixed",right:15,bottom:12,color:"var(--muted)",background:"rgba(255,255,255,.8)",padding:"7px 9px",borderRadius:9}}>Phiên tự đặt lại sau <strong style={{color:"var(--green-700)"}}>{timer}</strong></div>
       {modalProduct && (

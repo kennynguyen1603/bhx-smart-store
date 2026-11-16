@@ -355,12 +355,21 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
       // The rule was validated before claiming the task; discounts replace the current price.
       if (!rule) throw new ApiError(422, "Không có quy tắc FEFO phù hợp", "FEFO_RULE_NOT_FOUND");
       const markdownPriceVnd = Math.round((task.product.basePriceVnd * (100 - rule.discountPercent)) / 100);
-      // Different tasks can target one lot, so validate its current discount atomically.
+      // Different tasks can target one lot; recheck sellability and discount atomically.
       const upgraded = await tx.lot.updateMany({
-        where: { id: task.lot.id, OR: [{ markdownPercent: null }, { markdownPercent: { lt: rule.discountPercent } }] },
+        where: {
+          id: task.lot.id,
+          status: { in: [LotStatus.AVAILABLE, LotStatus.MARKED_DOWN] },
+          quantity: { gt: 0 },
+          OR: [{ markdownPercent: null }, { markdownPercent: { lt: rule.discountPercent } }],
+        },
         data: { status: LotStatus.MARKED_DOWN, markdownPercent: rule.discountPercent, markdownPriceVnd },
       });
       if (upgraded.count !== 1) {
+        const currentLot = await tx.lot.findUniqueOrThrow({ where: { id: task.lot.id } });
+        if ((currentLot.status !== LotStatus.AVAILABLE && currentLot.status !== LotStatus.MARKED_DOWN) || currentLot.quantity <= 0) {
+          throw new ApiError(409, "Lô không còn đủ điều kiện bán để giảm giá", "LOT_NOT_SELLABLE");
+        }
         throw new ApiError(409, "Lô đã có mức giảm giá bằng hoặc cao hơn quy tắc hiện tại", "MARKDOWN_NOT_UPGRADABLE");
       }
       lot = await tx.lot.findUniqueOrThrow({ where: { id: task.lot.id } });

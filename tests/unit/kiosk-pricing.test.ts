@@ -40,8 +40,12 @@ describe("selectPublicPrice", () => {
     expect(selectPublicPrice(basePriceVnd, lots, context)).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
   });
 
-  it.each(["", "invalid/timezone"])("excludes expiry-day markdowns with persisted timezone %j", (timeZone) => {
+  it.each([""])("excludes expiry-day markdowns with persisted timezone %j", (timeZone) => {
     expect(selectPublicPrice(basePriceVnd, [{ ...markdownLot, expiryDate: new Date("2026-11-16") }], { ...context, timeZone })).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
+  });
+
+  it("rejects a non-empty invalid persisted timezone instead of choosing a store day", () => {
+    expect(() => selectPublicPrice(basePriceVnd, [markdownLot], { ...context, timeZone: "invalid/timezone" })).toThrow(RangeError);
   });
 
   it("falls back to the base price when no lots exist", () => {

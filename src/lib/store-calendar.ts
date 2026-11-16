@@ -1,15 +1,12 @@
 const DEFAULT_STORE_TIME_ZONE = "Asia/Ho_Chi_Minh";
 const MILLISECONDS_PER_DAY = 86_400_000;
 
+/** Empty persisted zones use the store default; non-empty invalid zones throw RangeError. */
 export function daysUntilStoreDate(date: Date, now: Date, timeZone: string): number {
-  let formatter: Intl.DateTimeFormat;
-  const options: Intl.DateTimeFormatOptions = { year: "numeric", month: "2-digit", day: "2-digit" };
-  try {
-    formatter = new Intl.DateTimeFormat("en-US", { ...options, timeZone });
-  } catch (error) {
-    if (!(error instanceof RangeError)) throw error;
-    formatter = new Intl.DateTimeFormat("en-US", { ...options, timeZone: DEFAULT_STORE_TIME_ZONE });
-  }
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: timeZone.trim() === "" ? DEFAULT_STORE_TIME_ZONE : timeZone,
+  });
   const parts = formatter.formatToParts(now);
   const year = Number(parts.find((part) => part.type === "year")!.value);
   const month = Number(parts.find((part) => part.type === "month")!.value);

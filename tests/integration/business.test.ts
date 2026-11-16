@@ -257,6 +257,89 @@ describe("FEFO engine", () => {
     if (type === TaskType.FEFO) expect(tasks[0].note).toContain(`còn ${days} ngày · Giảm ${discount}%`);
   });
 
+  it.each([
+    { status: "QUARANTINED" as const, quantity: 4 },
+    { status: "SOLD_OUT" as const, quantity: 4 },
+    { status: "AVAILABLE" as const, quantity: 0 },
+    { status: "MARKED_DOWN" as const, quantity: -1 },
+  ])("does not revive an ineligible $status lot with quantity $quantity", async ({ status, quantity }) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
+    const { lot, task } = await createFefoFixture("2026-11-17");
+    const before = await prisma.lot.update({ where: { id: lot.id }, data: { status, quantity } });
+    await prisma.eSL.update({ where: { code: "ESL-TST-01" }, data: { ledOn: true } });
+    const mutationId = randomUUID();
+    await expect(completeFefoTask(task.id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, mutationId))
+      .rejects.toMatchObject({ status: 409, code: "LOT_NOT_SELLABLE" });
+    expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toEqual(before);
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
+    expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
+    expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { entityId: lot.id } })).toBe(0);
+    expect(await prisma.mutationReceipt.count({ where: { clientMutationId: mutationId } })).toBe(0);
+    expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(true);
+  });
+
+  it("does not revive a lot quarantined by a concurrent completion after the markdown snapshot", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
+    const { lot, task } = await createFefoFixture("2026-11-17");
+    const quarantineTask = await prisma.task.create({ data: {
+      storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId,
+      lotId: lot.id, type: TaskType.QUARANTINE, title: "Concurrent quarantine",
+    } });
+    let snapshotRead!: () => void;
+    let releaseMarkdown!: () => void;
+    const snapshotReady = new Promise<void>((resolve) => { snapshotRead = resolve; });
+    const quarantineCommitted = new Promise<void>((resolve) => { releaseMarkdown = resolve; });
+    const runTransaction = prisma.$transaction.bind(prisma);
+    const transaction = vi.spyOn(prisma, "$transaction").mockImplementation((async (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+      return runTransaction(async (tx) => {
+        const taskDelegate = new Proxy(tx.task, {
+          get(target, property) {
+            if (property !== "findUnique") return Reflect.get(target, property);
+            return async (args: Prisma.TaskFindUniqueArgs) => {
+              const snapshot = await tx.task.findUnique(args);
+              if (args.where.id === task.id) {
+                snapshotRead();
+                await quarantineCommitted;
+              }
+              return snapshot;
+            };
+          },
+        });
+        return callback(new Proxy(tx, {
+          get(target, property) { return property === "task" ? taskDelegate : Reflect.get(target, property); },
+        }));
+      }, { timeout: 15_000 });
+    }) as typeof prisma.$transaction);
+    const user = { id: fixture.userId, role: Role.ADMIN, storeIds: [] };
+    const markdownMutation = randomUUID();
+    const quarantineMutation = randomUUID();
+    const markdownResult = Promise.allSettled([completeFefoTask(task.id, user, markdownMutation)]);
+    try {
+      await snapshotReady;
+      await completeFefoTask(quarantineTask.id, user, quarantineMutation);
+      releaseMarkdown();
+      const [result] = await markdownResult;
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason).toMatchObject({ status: 409, code: "LOT_NOT_SELLABLE" });
+      expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "QUARANTINED", markdownPercent: null, markdownPriceVnd: null });
+      expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
+      expect(await prisma.task.findUniqueOrThrow({ where: { id: quarantineTask.id } })).toMatchObject({ status: TaskStatus.COMPLETED });
+      expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
+      expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "FEFO_MARKDOWN" } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "LOT_QUARANTINE" } })).toBe(1);
+      expect(await prisma.mutationReceipt.count({ where: { clientMutationId: markdownMutation } })).toBe(0);
+      expect(await prisma.mutationReceipt.count({ where: { clientMutationId: quarantineMutation } })).toBe(1);
+    } finally {
+      releaseMarkdown();
+      await markdownResult;
+      transaction.mockRestore();
+    }
+  });
+
   it.each([20, 30])("rejects an existing %i percent markdown when the store-day rule allows only 20 percent without side effects", async (percent) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
