@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { z } from "zod";
 
 const schema = z.object({ mode: z.enum(["POS", "WMS", "SUPPLIER", "FEFO"]), inventoryId: z.string().optional(), quantity: z.number().int().positive().optional(), operationId: z.string().uuid() });
+const STALE_OPERATION_MS = 2 * 60_000;
 
 type ReceiptPayload = { status: "PENDING" } | { status: "COMPLETED"; data: unknown };
 
@@ -14,6 +15,16 @@ async function reconcileReceipt(operationId: string, userId: string, action: str
   if (receipt.userId !== userId || receipt.action !== action) throw new ApiError(409, "Mã thao tác đã được dùng cho yêu cầu khác.", "OPERATION_KEY_REUSED");
   const payload = receipt.response as ReceiptPayload;
   if (payload.status === "COMPLETED") return payload.data;
+  const integration = await prisma.integrationEvent.findUnique({ where: { externalEventId: `admin-sim-${userId}-${operationId}` } });
+  if (integration?.status === "PROCESSED" && integration.result) {
+    const data = { duplicate: false, ...(integration.result as object) };
+    await prisma.mutationReceipt.update({ where: { id: receipt.id }, data: { response: { status: "COMPLETED", data: JSON.parse(JSON.stringify(data)) } } });
+    return data;
+  }
+  const released = await prisma.mutationReceipt.deleteMany({
+    where: { id: receipt.id, createdAt: { lte: new Date(Date.now() - STALE_OPERATION_MS) }, response: { path: ["status"], equals: "PENDING" } },
+  });
+  if (released.count === 1) return null;
   throw new ApiError(409, "Thao tác này đang được xử lý. Hãy thử kiểm tra lại sau.", "OPERATION_IN_PROGRESS");
 }
 
