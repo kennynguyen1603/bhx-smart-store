@@ -4,11 +4,14 @@ import {
   EslStatus,
   LotStatus,
   PrismaClient,
+  type Prisma,
   Role,
   TaskPriority,
   TaskStatus,
   TaskType,
 } from "../src/generated/prisma/client";
+
+import { daysUntilStoreDate } from "../src/lib/store-calendar";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const prisma = new PrismaClient({ adapter });
@@ -21,11 +24,18 @@ const normalize = (value: string) =>
     .replace(/Đ/g, "D")
     .toLowerCase();
 
-const addDays = (days: number) => {
-  const date = new Date();
+const seedNow = new Date();
+const addDays = (days: number, timeZone = "Asia/Ho_Chi_Minh") => {
+  const date = new Date(seedNow);
   date.setUTCHours(0, 0, 0, 0);
-  date.setUTCDate(date.getUTCDate() + days);
+  date.setUTCDate(date.getUTCDate() + days - daysUntilStoreDate(date, seedNow, timeZone));
   return date;
+};
+
+const primaryLotOverrides: Record<string, Partial<Pick<Prisma.LotCreateInput, "status" | "quantity" | "markdownPercent" | "markdownPriceVnd">>> = {
+  "GREENS-500": { status: LotStatus.MARKED_DOWN, markdownPercent: 20, markdownPriceVnd: 14_320 },
+  "BREAD-300": { status: LotStatus.MARKED_DOWN, markdownPercent: 20, markdownPriceVnd: 22_800 },
+  "APPLE-1KG": { status: LotStatus.SOLD_OUT, quantity: 0 },
 };
 
 async function main() {
@@ -164,14 +174,14 @@ async function main() {
       { code: "T-01", label: "Kệ rau VietGAP", zone: "Rau củ & trái cây", sku: "GREENS-500", x: 0, y: 1, stockNguyenTrai: 10, stockLeVanViet: 0, backroom: 20, capacity: 18, threshold: 4, lotQuantity: 10, expiryDays: 3, secondaryQuantity: 12, secondaryExpiryDays: 6 },
       { code: "T-03", label: "Bàn táo nhập khẩu", zone: "Rau củ & trái cây", sku: "APPLE-1KG", x: 2, y: 1, stockNguyenTrai: 20, stockLeVanViet: 4, backroom: 30, capacity: 24, threshold: 5, lotQuantity: 12, expiryDays: 7, secondaryQuantity: 18, secondaryExpiryDays: 18 },
       { code: "T-05", label: "Bàn cam nhập khẩu", zone: "Rau củ & trái cây", sku: "ORANGE-1KG", x: 4, y: 1, stockNguyenTrai: 3, stockLeVanViet: 12, backroom: 22, capacity: 20, threshold: 4, lotQuantity: 10, expiryDays: 10, secondaryQuantity: 14, secondaryExpiryDays: 20 },
-      { code: "L-01", label: "Kệ trứng tươi", zone: "Sữa & đồ lạnh", sku: "EGGS-10", x: 7, y: 1, stockNguyenTrai: 2, stockLeVanViet: 8, backroom: 30, capacity: 15, threshold: 3, lotQuantity: 20, expiryDays: 1, secondaryQuantity: 24, secondaryExpiryDays: 8 },
+      { code: "L-01", label: "Kệ trứng tươi", zone: "Sữa & đồ lạnh", sku: "EGGS-10", x: 7, y: 1, stockNguyenTrai: 2, stockLeVanViet: 8, backroom: 30, capacity: 15, threshold: 3, lotQuantity: 20, expiryDays: 3, secondaryQuantity: 24, secondaryExpiryDays: 8 },
       { code: "L-02", label: "Kệ sữa tươi", zone: "Sữa & đồ lạnh", sku: "MILK-1L", x: 8, y: 1, stockNguyenTrai: 3, stockLeVanViet: 9, backroom: 12, capacity: 18, threshold: 4, lotQuantity: 8, expiryDays: 8, secondaryQuantity: 12, secondaryExpiryDays: 18 },
-      { code: "L-04", label: "Kệ sữa chua", zone: "Sữa & đồ lạnh", sku: "YOGURT-4", x: 10, y: 1, stockNguyenTrai: 12, stockLeVanViet: 2, backroom: 24, capacity: 16, threshold: 3, lotQuantity: 10, expiryDays: 2, secondaryQuantity: 14, secondaryExpiryDays: 12 },
+      { code: "L-04", label: "Kệ sữa chua", zone: "Sữa & đồ lạnh", sku: "YOGURT-4", x: 10, y: 1, stockNguyenTrai: 12, stockLeVanViet: 2, backroom: 24, capacity: 16, threshold: 3, lotQuantity: 10, expiryDays: 3, secondaryQuantity: 14, secondaryExpiryDays: 12 },
       { code: "L-06", label: "Kệ phô mai", zone: "Sữa & đồ lạnh", sku: "CHEESE-8", x: 11, y: 1, stockNguyenTrai: 0, stockLeVanViet: 5, backroom: 10, capacity: 12, threshold: 2, lotQuantity: 3, expiryDays: -1, secondaryQuantity: 10, secondaryExpiryDays: 20 },
       { code: "C-03", label: "Kệ gia vị & nước chấm", zone: "Thực phẩm khô", sku: "FISHSAUCE-750", x: 4, y: 3, stockNguyenTrai: 4, stockLeVanViet: 10, backroom: 20, capacity: 15, threshold: 4, lotQuantity: 16, expiryDays: 300, secondaryQuantity: null, secondaryExpiryDays: null },
       { code: "C-07", label: "Kệ mì ăn liền", zone: "Thực phẩm khô", sku: "NOODLE-75", x: 4, y: 4, stockNguyenTrai: 7, stockLeVanViet: 0, backroom: 18, capacity: 24, threshold: 6, lotQuantity: 12, expiryDays: 180, secondaryQuantity: null, secondaryExpiryDays: null },
       { code: "C-09", label: "Kệ gạo đóng túi", zone: "Thực phẩm khô", sku: "RICE-ST25", x: 4, y: 5, stockNguyenTrai: 15, stockLeVanViet: 3, backroom: 25, capacity: 20, threshold: 4, lotQuantity: 20, expiryDays: 365, secondaryQuantity: null, secondaryExpiryDays: null },
-      { code: "A-02", label: "Kệ bánh mì", zone: "Bánh & đồ ăn nhanh", sku: "BREAD-300", x: 6, y: 4, stockNguyenTrai: 6, stockLeVanViet: 1, backroom: 42, capacity: 10, threshold: 2, lotQuantity: 14, expiryDays: 4, secondaryQuantity: 18, secondaryExpiryDays: 7 },
+      { code: "A-02", label: "Kệ bánh mì", zone: "Bánh & đồ ăn nhanh", sku: "BREAD-300", x: 6, y: 4, stockNguyenTrai: 6, stockLeVanViet: 1, backroom: 42, capacity: 10, threshold: 2, lotQuantity: 14, expiryDays: 3, secondaryQuantity: 18, secondaryExpiryDays: 7 },
       { code: "D-03", label: "Kệ nước rửa chén", zone: "Chăm sóc nhà", sku: "DISH-750", x: 9, y: 3, stockNguyenTrai: 1, stockLeVanViet: 0, backroom: 14, capacity: 10, threshold: 3, lotQuantity: 12, expiryDays: 600, secondaryQuantity: null, secondaryExpiryDays: null },
       { code: "D-11", label: "Kệ nước giặt", zone: "Chăm sóc nhà", sku: "OMO-36", x: 9, y: 4, stockNguyenTrai: 8, stockLeVanViet: 5, backroom: 36, capacity: 12, threshold: 3, lotQuantity: 24, expiryDays: 540, secondaryQuantity: null, secondaryExpiryDays: null },
       { code: "D-13", label: "Kệ giấy gia dụng", zone: "Chăm sóc nhà", sku: "TISSUE-10", x: 9, y: 5, stockNguyenTrai: 9, stockLeVanViet: 2, backroom: 20, capacity: 12, threshold: 3, lotQuantity: 18, expiryDays: 700, secondaryQuantity: null, secondaryExpiryDays: null },
@@ -204,7 +214,13 @@ async function main() {
         ...(shelfInput.secondaryQuantity !== null && shelfInput.secondaryExpiryDays !== null
           ? [{ batchCode: `LOT-${store.code}-${index + 1}-B`, quantity: shelfInput.secondaryQuantity, expiryDays: shelfInput.secondaryExpiryDays, receivedDays: -1 }]
           : []),
-      ];
+      ].map((lot, lotIndex) => ({
+        ...lot,
+        status: LotStatus.AVAILABLE as LotStatus,
+        markdownPercent: null as number | null,
+        markdownPriceVnd: null as number | null,
+        ...(lotIndex === 0 ? primaryLotOverrides[shelfInput.sku] : {}),
+      }));
       for (const lotInput of lotSeeds) {
         await prisma.lot.deleteMany({ where: { storeId: store.id, batchCode: lotInput.batchCode, productId: { not: product.id } } });
         await prisma.lot.upsert({
@@ -212,12 +228,12 @@ async function main() {
           update: {
             supplierId: supplier.id,
             origin: productDataItem.origin,
-            receivedAt: addDays(lotInput.receivedDays),
-            expiryDate: addDays(lotInput.expiryDays),
+            receivedAt: addDays(lotInput.receivedDays, store.timeZone),
+            expiryDate: addDays(lotInput.expiryDays, store.timeZone),
             quantity: lotInput.quantity,
-            status: LotStatus.AVAILABLE,
-            markdownPercent: null,
-            markdownPriceVnd: null,
+            status: lotInput.status,
+            markdownPercent: lotInput.markdownPercent,
+            markdownPriceVnd: lotInput.markdownPriceVnd,
           },
           create: {
             storeId: store.id,
@@ -225,10 +241,12 @@ async function main() {
             supplierId: supplier.id,
             batchCode: lotInput.batchCode,
             origin: productDataItem.origin,
-            receivedAt: addDays(lotInput.receivedDays),
-            expiryDate: addDays(lotInput.expiryDays),
+            receivedAt: addDays(lotInput.receivedDays, store.timeZone),
+            expiryDate: addDays(lotInput.expiryDays, store.timeZone),
             quantity: lotInput.quantity,
-            status: LotStatus.AVAILABLE,
+            status: lotInput.status,
+            markdownPercent: lotInput.markdownPercent,
+            markdownPriceVnd: lotInput.markdownPriceVnd,
           },
         });
       }
@@ -247,7 +265,7 @@ async function main() {
     ]) {
       await prisma.fefoRule.upsert({
         where: { storeId_daysRemaining: { storeId: store.id, daysRemaining: rule.daysRemaining } },
-        update: rule,
+        update: { ...rule, active: true },
         create: { storeId: store.id, ...rule },
       });
     }
@@ -260,9 +278,9 @@ async function main() {
     { sku: "MILK-1L", type: TaskType.RESTOCK, priority: TaskPriority.HIGH, title: "Bổ sung kệ sữa tươi", note: "Tồn kệ dưới ngưỡng · LED đang nháy", withLot: false },
     { sku: "ORANGE-1KG", type: TaskType.RESTOCK, priority: TaskPriority.MEDIUM, title: "Bổ sung bàn cam nhập khẩu", note: "Tồn kệ chạm ngưỡng cảnh báo", withLot: false },
     { sku: "DISH-750", type: TaskType.RESTOCK, priority: TaskPriority.HIGH, title: "Bổ sung nước rửa chén", note: "Kệ chỉ còn 1 sản phẩm · ưu tiên xử lý", withLot: false },
-    { sku: "YOGURT-4", type: TaskType.FEFO, priority: TaskPriority.MEDIUM, title: "Dán nhãn FEFO sữa chua", note: "Lô gần nhất còn 2 ngày · giảm 20%", withLot: true },
-    { sku: "EGGS-10", type: TaskType.FEFO, priority: TaskPriority.HIGH, title: "Dán nhãn FEFO trứng gà", note: "Lô gần nhất còn 1 ngày · giảm 30%", withLot: true },
-    { sku: "CHEESE-8", type: TaskType.QUARANTINE, priority: TaskPriority.HIGH, title: "Cách ly lô phô mai hết hạn", note: "Không được bày bán · chuyển khỏi khu vực bán", withLot: true },
+    { sku: "YOGURT-4", type: TaskType.FEFO, title: "Dán nhãn FEFO sữa chua", withLot: true },
+    { sku: "EGGS-10", type: TaskType.FEFO, title: "Dán nhãn FEFO trứng gà", withLot: true },
+    { sku: "CHEESE-8", type: TaskType.QUARANTINE, title: "Cách ly lô phô mai hết hạn", withLot: true },
   ];
   for (const taskInput of taskSeeds) {
     const product = products.get(taskInput.sku)!;
@@ -270,11 +288,22 @@ async function main() {
     const lot = taskInput.withLot
       ? await prisma.lot.findFirstOrThrow({ where: { storeId: nguyenTrai.id, productId: product.id }, orderBy: { expiryDate: "asc" } })
       : null;
+    const days = lot ? daysUntilStoreDate(lot.expiryDate, seedNow, nguyenTrai.timeZone) : null;
+    const rule = days === null ? null : await prisma.fefoRule.findFirst({
+      where: { storeId: nguyenTrai.id, active: true, daysRemaining: { gte: days } },
+      orderBy: { daysRemaining: "asc" },
+    });
+    if (lot && !rule) throw new Error(`Missing FEFO rule for ${lot.batchCode}`);
+    const type = lot && (rule!.quarantine || days! <= 0) ? TaskType.QUARANTINE : taskInput.type;
+    const priority = lot ? (days! <= 1 ? TaskPriority.HIGH : TaskPriority.MEDIUM) : taskInput.priority;
+    const note = lot
+      ? type === TaskType.QUARANTINE ? `Lô ${lot.batchCode} đã hết hạn` : `Lô ${lot.batchCode} còn ${days} ngày · Giảm ${rule!.discountPercent}%`
+      : taskInput.note;
     const existing = await prisma.task.findFirst({
       where: {
         storeId: nguyenTrai.id,
         productId: product.id,
-        type: taskInput.type,
+        type,
         ...(lot ? { lotId: lot.id } : {}),
         status: { in: [TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED] },
       },
@@ -286,12 +315,12 @@ async function main() {
           productId: product.id,
           shelfId: inventory.shelfId,
           lotId: lot?.id,
-          type: taskInput.type,
+          type,
           status: TaskStatus.OPEN,
-          priority: taskInput.priority,
+          priority,
           title: taskInput.title,
-          note: taskInput.note,
-          dueAt: addDays(0),
+          note,
+          dueAt: addDays(0, nguyenTrai.timeZone),
         },
       });
     }

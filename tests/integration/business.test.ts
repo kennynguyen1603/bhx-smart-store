@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api-auth";
 import { completeFefoTask, completeRestock, processSaleEvent, runFefoEngine, startTask } from "@/lib/business";
 import { prisma } from "@/lib/db";
@@ -60,9 +60,12 @@ beforeEach(async () => {
   await prisma.stockMovement.deleteMany({ where: { inventoryId: fixture.inventoryId } });
   await prisma.auditLog.deleteMany({ where: { storeId: fixture.storeId } });
   await prisma.mutationReceipt.deleteMany({ where: { userId: fixture.userId } });
+  await prisma.store.update({ where: { id: fixture.storeId }, data: { timeZone: "Asia/Ho_Chi_Minh" } });
   await prisma.inventory.update({ where: { id: fixture.inventoryId }, data: { onShelf: 6, backroom: 10, capacity: 10, lowThreshold: 3, version: 1 } });
   await prisma.eSL.updateMany({ where: { storeId: fixture.storeId }, data: { ledOn: false } });
 });
+
+afterEach(() => vi.useRealTimers());
 
 afterAll(cleanupFixture);
 
@@ -210,8 +213,100 @@ describe("POS and RESTOCK business flow", () => {
   });
 });
 
+async function createFefoFixture(expiryDate: string, markdownPercent: number | null = null) {
+  const lot = await prisma.lot.create({ data: {
+    storeId: fixture.storeId, productId: fixture.productId, supplierId: fixture.supplierId,
+    batchCode: `FEFO-DATE-${randomUUID()}`, origin: "Việt Nam", receivedAt: new Date(),
+    expiryDate: new Date(expiryDate), quantity: 4,
+    status: markdownPercent === null ? "AVAILABLE" : "MARKED_DOWN",
+    markdownPercent, markdownPriceVnd: markdownPercent === null ? null : 10_000 * (100 - markdownPercent) / 100,
+  } });
+  const task = await prisma.task.create({ data: {
+    storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId,
+    lotId: lot.id, type: TaskType.FEFO, title: "Store-day FEFO", note: "Original note",
+  } });
+  return { lot, task };
+}
+
 describe("FEFO engine", () => {
+  it.each([
+    { percent: 20, expiry: "2026-11-19", count: 0 },
+    { percent: 30, expiry: "2026-11-19", count: 0 },
+    { percent: 20, expiry: "2026-11-17", count: 1 },
+  ])("creates $count upgrade tasks for an existing $percent percent markdown expiring $expiry", async ({ percent, expiry, count }) => {
+    const { lot, task } = await createFefoFixture(expiry, percent);
+    await prisma.task.delete({ where: { id: task.id } });
+    await runFefoEngine(new Date("2026-11-16T08:00:00Z"));
+    const tasks = await prisma.task.findMany({ where: { lotId: lot.id } });
+    expect(tasks).toHaveLength(count);
+    if (count) expect(tasks[0]).toMatchObject({ type: TaskType.FEFO, note: `Lô ${lot.batchCode} còn 1 ngày · Giảm 30%` });
+  });
+
+  it.each([
+    { timeZone: "Asia/Ho_Chi_Minh", now: "2026-11-16T18:00:00Z", expiry: "2026-11-20", days: 3, type: TaskType.FEFO, priority: TaskPriority.MEDIUM, discount: 20 },
+    { timeZone: "America/New_York", now: "2026-11-16T01:00:00Z", expiry: "2026-11-16", days: 1, type: TaskType.FEFO, priority: TaskPriority.HIGH, discount: 30 },
+    { timeZone: "Asia/Ho_Chi_Minh", now: "2026-11-16T18:00:00Z", expiry: "2026-11-17", days: 0, type: TaskType.QUARANTINE, priority: TaskPriority.HIGH, discount: 0 },
+  ])("selects store-day rules in $timeZone at $now for expiry $expiry", async ({ timeZone, now, expiry, days, type, priority, discount }) => {
+    await prisma.store.update({ where: { id: fixture.storeId }, data: { timeZone } });
+    const { lot, task } = await createFefoFixture(expiry);
+    await prisma.task.delete({ where: { id: task.id } });
+    await runFefoEngine(new Date(now));
+    const tasks = await prisma.task.findMany({ where: { lotId: lot.id } });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ type, priority, status: TaskStatus.OPEN });
+    if (type === TaskType.FEFO) expect(tasks[0].note).toContain(`còn ${days} ngày · Giảm ${discount}%`);
+  });
+
+  it.each([20, 30])("rejects an existing %i percent markdown when the store-day rule allows only 20 percent without side effects", async (percent) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
+    const { lot, task } = await createFefoFixture("2026-11-20", percent);
+    const [staff] = await getCompetingStaff();
+    await prisma.eSL.update({ where: { code: "ESL-TST-01" }, data: { ledOn: true } });
+    const clientMutationId = randomUUID();
+    await expect(completeFefoTask(task.id, { id: staff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, clientMutationId))
+      .rejects.toMatchObject({ status: 409, code: "MARKDOWN_NOT_UPGRADABLE" });
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
+    expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toEqual(lot);
+    expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
+    expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { entityId: lot.id } })).toBe(0);
+    expect(await prisma.mutationReceipt.count({ where: { clientMutationId } })).toBe(0);
+    expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(true);
+  });
+
+  it("replaces 20% with the store-day 30% price and appends one historical markdown on retry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
+    const { lot, task } = await createFefoFixture("2026-11-18", 20);
+    const historical = await prisma.markdown.create({ data: { lotId: lot.id, discountPercent: 20, originalPriceVnd: 10_000, markdownPriceVnd: 8_000 } });
+    const user = { id: fixture.userId, role: Role.ADMIN, storeIds: [] };
+    const clientMutationId = randomUUID();
+    const result = await completeFefoTask(task.id, user, clientMutationId);
+    await expect(completeFefoTask(task.id, user, clientMutationId)).resolves.toEqual(result);
+    expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "MARKED_DOWN", markdownPercent: 30, markdownPriceVnd: 7_000 });
+    expect(await prisma.markdown.findUnique({ where: { id: historical.id } })).toEqual(historical);
+    expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(2);
+    expect(await prisma.markdown.count({ where: { lotId: lot.id, discountPercent: 30, originalPriceVnd: 10_000, markdownPriceVnd: 7_000 } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "FEFO_MARKDOWN" } })).toBe(1);
+    expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(1);
+  });
+
+  it("quarantines a stale FEFO task on the store expiry day without creating a markdown", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
+    const { lot, task } = await createFefoFixture("2026-11-17", 20);
+    await completeFefoTask(task.id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, randomUUID());
+    expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "QUARANTINED" });
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: TaskStatus.COMPLETED, note: `Đã cách ly lô ${lot.batchCode}` });
+    expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "LOT_QUARANTINE" } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "FEFO_MARKDOWN" } })).toBe(0);
+  });
+
   it("atomically completes FEFO once for concurrent Admin requests with different mutation IDs", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
     const expiryDate = new Date();
     expiryDate.setUTCDate(expiryDate.getUTCDate() + 1);
     const lot = await prisma.lot.create({
@@ -276,6 +371,8 @@ describe("FEFO engine", () => {
   });
 
   it("allows only one competing Staff completion to apply FEFO side effects", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
     const [firstStaff, secondStaff] = await getCompetingStaff();
     const expiryDate = new Date();
     expiryDate.setUTCDate(expiryDate.getUTCDate() + 1);

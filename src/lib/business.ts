@@ -14,6 +14,7 @@ import { ApiError } from "@/lib/api-auth";
 import type { SaleEventInput, SupplierLotInput, WmsInventoryInput } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
 import { sendPushToStore } from "@/lib/push";
+import { daysUntilStoreDate } from "@/lib/store-calendar";
 import { assertTaskClaimable } from "@/lib/task-access";
 
 const ACTIVE_TASKS: TaskStatus[] = [TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED];
@@ -288,13 +289,16 @@ export async function runFefoEngine(now = new Date()) {
   for (const store of stores) {
     const maxDays = Math.max(...store.fefoRules.map((rule) => rule.daysRemaining), 0);
     const end = new Date(now);
-    end.setUTCDate(end.getUTCDate() + maxDays);
+    // expiryDate is a date-only column: bound candidates by the store's day.
+    end.setUTCDate(end.getUTCDate() + maxDays - daysUntilStoreDate(now, now, store.timeZone));
+    end.setUTCHours(0, 0, 0, 0);
     const lots = await prisma.lot.findMany({ where: { storeId: store.id, quantity: { gt: 0 }, status: { in: [LotStatus.AVAILABLE, LotStatus.MARKED_DOWN] }, expiryDate: { lte: end } }, include: { product: true } });
     for (const lot of lots) {
-      const days = daysRemaining(lot.expiryDate, now);
+      const days = daysUntilStoreDate(lot.expiryDate, now, store.timeZone);
       const rule = store.fefoRules.find((item) => days <= item.daysRemaining);
       if (!rule) continue;
       const type = rule.quarantine || days <= 0 ? TaskType.QUARANTINE : TaskType.FEFO;
+      if (type === TaskType.FEFO && (lot.markdownPercent ?? 0) >= rule.discountPercent) continue;
       const active = await prisma.task.findFirst({ where: { lotId: lot.id, type, status: { in: ACTIVE_TASKS } } });
       if (active) continue;
       const inventory = await prisma.inventory.findFirst({ where: { storeId: store.id, productId: lot.productId } });
@@ -316,9 +320,21 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
   const receipt = await prisma.mutationReceipt.findUnique({ where: { clientMutationId } });
   if (receipt) return receipt.response as object;
   return prisma.$transaction(async (tx) => {
-    const task = await tx.task.findUnique({ where: { id: taskId }, include: { lot: true, product: true } });
+    const task = await tx.task.findUnique({ where: { id: taskId }, include: { lot: true, product: true, store: { select: { timeZone: true } } } });
     if (!task?.lot || !FEFO_TASKS.includes(task.type)) throw new ApiError(404, "Không tìm thấy nhiệm vụ FEFO", "TASK_NOT_FOUND");
     if (user.role !== Role.ADMIN && !user.storeIds.includes(task.storeId)) throw new ApiError(403, "Nhiệm vụ thuộc cửa hàng khác", "STORE_FORBIDDEN");
+    assertTaskClaimable(task, user);
+    if (!FEFO_COMPLETABLE_TASKS.includes(task.status)) throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+    const now = new Date();
+    const days = daysUntilStoreDate(task.lot.expiryDate, now, task.store.timeZone);
+    const rule = await tx.fefoRule.findFirst({ where: { storeId: task.storeId, active: true, daysRemaining: { gte: days } }, orderBy: { daysRemaining: "asc" } });
+    const quarantine = task.type === TaskType.QUARANTINE || days <= 0 || rule?.quarantine === true;
+    if (!quarantine) {
+      if (!rule) throw new ApiError(422, "Không có quy tắc FEFO phù hợp", "FEFO_RULE_NOT_FOUND");
+      if ((task.lot.markdownPercent ?? 0) >= rule.discountPercent) {
+        throw new ApiError(409, "Lô đã có mức giảm giá bằng hoặc cao hơn quy tắc hiện tại", "MARKDOWN_NOT_UPGRADABLE");
+      }
+    }
     const claimed = await tx.task.updateMany({
       where: {
         id: task.id,
@@ -333,20 +349,19 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
       throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
     }
     let lot;
-    if (task.type === TaskType.QUARANTINE) {
+    if (quarantine) {
       lot = await tx.lot.update({ where: { id: task.lot.id }, data: { status: LotStatus.QUARANTINED } });
     } else {
-      const days = daysRemaining(task.lot.expiryDate);
-      const rule = await tx.fefoRule.findFirst({ where: { storeId: task.storeId, active: true, quarantine: false, daysRemaining: { gte: days } }, orderBy: { daysRemaining: "asc" } });
+      // The rule was validated before claiming the task; discounts replace the current price.
       if (!rule) throw new ApiError(422, "Không có quy tắc FEFO phù hợp", "FEFO_RULE_NOT_FOUND");
       const markdownPriceVnd = Math.round((task.product.basePriceVnd * (100 - rule.discountPercent)) / 100);
       lot = await tx.lot.update({ where: { id: task.lot.id }, data: { status: LotStatus.MARKED_DOWN, markdownPercent: rule.discountPercent, markdownPriceVnd } });
       await tx.markdown.create({ data: { lotId: lot.id, discountPercent: rule.discountPercent, originalPriceVnd: task.product.basePriceVnd, markdownPriceVnd } });
     }
-    const updatedTask = await tx.task.update({ where: { id: task.id }, data: { note: task.type === TaskType.QUARANTINE ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });
+    const updatedTask = await tx.task.update({ where: { id: task.id }, data: { note: quarantine ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });
     await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: "COMPLETED", note: updatedTask.note } });
     await tx.eSL.updateMany({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId }, data: { ledOn: false } });
-    await tx.auditLog.create({ data: { actorId: user.id, storeId: task.storeId, action: task.type === TaskType.QUARANTINE ? "LOT_QUARANTINE" : "FEFO_MARKDOWN", entityType: "Lot", entityId: lot.id, before: json(task.lot), after: json(lot) } });
+    await tx.auditLog.create({ data: { actorId: user.id, storeId: task.storeId, action: quarantine ? "LOT_QUARANTINE" : "FEFO_MARKDOWN", entityType: "Lot", entityId: lot.id, before: json(task.lot), after: json(lot) } });
     const response = { task: { id: updatedTask.id, status: updatedTask.status, note: updatedTask.note }, lot: { id: lot.id, status: lot.status, markdownPercent: lot.markdownPercent, markdownPriceVnd: lot.markdownPriceVnd } };
     await tx.mutationReceipt.create({ data: { clientMutationId, userId: user.id, action: "FEFO_COMPLETE", response: json(response) } });
     return response;
