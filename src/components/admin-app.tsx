@@ -22,6 +22,7 @@ import type { AdminConfirmDescriptor, AdminDialogDescriptor, ApiMutationResult }
 import { toast, Toaster } from "@/components/ui/sonner";
 import { Logo } from "@/components/logo";
 import { DEMO_ACCOUNTS } from "@/lib/demo-roles";
+import { useStoreChangePolling } from "@/lib/use-store-change-polling";
 import { formatVnd } from "@/lib/normalize";
 
 type StoreData = { id: string; code: string; name: string; address: string; mapWidth: number; mapHeight: number; active: boolean; zones: { id: string; name: string; color: string; x: number; y: number; width: number; height: number }[]; shelves: Shelf[]; kiosks: { id: string; name: string; x: number; y: number }[] };
@@ -76,31 +77,59 @@ export function AdminApp({ user }: { user: Session["user"] }) {
   const integrationOperationIds = useRef<Partial<Record<IntegrationMode, string>>>({});
   const requestControllers = useRef(new Set<AbortController>());
   const mountedRef = useRef(true);
+  const loadGenerationRef = useRef(0);
+  const loadStoreIdRef = useRef<string | null>(storeId);
+  const activeLoadRef = useRef<{ controller: AbortController; promise: Promise<boolean>; followup?: Promise<boolean> } | null>(null);
   const canAdmin = user.role === "ADMIN";
   const notify = useCallback((message: string, error = false) => { if (error) toast.error(message); else toast.success(message); }, []);
-  const load = useCallback(async (afterWrite = false) => {
+  const load = useCallback(async function loadStore(afterWrite = false, refreshAfterPending = false): Promise<boolean> {
+    if (storeId !== loadStoreIdRef.current) return false;
+    const generation = loadGenerationRef.current;
+    const active = activeLoadRef.current;
+    if (active) {
+      if (!afterWrite && !refreshAfterPending) return active.promise;
+      active.followup ??= active.promise.then(() => generation === loadGenerationRef.current ? loadStore(afterWrite) : false);
+      return active.followup;
+    }
     if (mountedRef.current) setLoading(true);
     const controller = new AbortController();
+    const isCurrent = () => mountedRef.current && !controller.signal.aborted && generation === loadGenerationRef.current;
     requestControllers.current.add(controller);
-    try {
-      const response = await fetchWithTimeout(`/api/admin/overview${storeId ? `?storeId=${storeId}` : ""}`, { cache: "no-store" }, controller);
-      if (!response.ok) throw new Error("Overview refresh failed");
-      const result: Overview = await response.json();
-      if (!mountedRef.current) return false;
-      setData(result);
-      if (!storeId && result.selectedStoreId) setStoreId(result.selectedStoreId);
-      return true;
-    } catch (error) {
-      if (mountedRef.current) notify(afterWrite
-        ? error instanceof AdminRequestTimeoutError ? "Đã lưu thay đổi nhưng quá thời gian tải lại dữ liệu. Vui lòng tải lại dữ liệu." : "Đã lưu thay đổi nhưng không thể tải lại dữ liệu. Vui lòng tải lại dữ liệu."
-        : error instanceof AdminRequestTimeoutError ? "Quá thời gian tải dữ liệu quản trị. Vui lòng thử lại." : "Không thể tải dữ liệu quản trị. Vui lòng thử lại.", true);
-      return false;
-    } finally {
-      requestControllers.current.delete(controller);
-      if (mountedRef.current) setLoading(false);
-    }
+    const promise = (async () => {
+      try {
+        const response = await fetchWithTimeout(`/api/admin/overview${storeId ? `?storeId=${encodeURIComponent(storeId)}` : ""}`, { cache: "no-store" }, controller);
+        if (!response.ok) throw new Error("Overview refresh failed");
+        const result: Overview = await response.json();
+        if (!isCurrent()) return false;
+        setData(result);
+        if (!storeId && result.selectedStoreId) setStoreId(result.selectedStoreId);
+        return true;
+      } catch (error) {
+        if (mountedRef.current && generation === loadGenerationRef.current && (!controller.signal.aborted || error instanceof AdminRequestTimeoutError)) notify(afterWrite
+          ? error instanceof AdminRequestTimeoutError ? "Đã lưu thay đổi nhưng quá thời gian tải lại dữ liệu. Vui lòng tải lại dữ liệu." : "Đã lưu thay đổi nhưng không thể tải lại dữ liệu. Vui lòng tải lại dữ liệu."
+          : error instanceof AdminRequestTimeoutError ? "Quá thời gian tải dữ liệu quản trị. Vui lòng thử lại." : "Không thể tải dữ liệu quản trị. Vui lòng thử lại.", true);
+        return false;
+      } finally {
+        requestControllers.current.delete(controller);
+        if (mountedRef.current && generation === loadGenerationRef.current) setLoading(false);
+        if (activeLoadRef.current?.controller === controller) activeLoadRef.current = null;
+      }
+    })();
+    activeLoadRef.current = { controller, promise };
+    return promise;
   }, [storeId, notify]);
-  useEffect(() => { const initialLoad = window.setTimeout(() => void load(), 0); return () => clearTimeout(initialLoad); }, [load]);
+  useEffect(() => {
+    loadStoreIdRef.current = storeId;
+    const initialLoad = window.setTimeout(() => void load(), 0);
+    return () => {
+      clearTimeout(initialLoad);
+      loadStoreIdRef.current = null;
+      loadGenerationRef.current += 1;
+      activeLoadRef.current?.controller.abort();
+      activeLoadRef.current = null;
+    };
+  }, [load, storeId]);
+  useStoreChangePolling({ storeId, onChange: async () => { await load(false, true); } });
   useEffect(() => {
     mountedRef.current = true;
     const controllers = requestControllers.current;

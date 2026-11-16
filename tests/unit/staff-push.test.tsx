@@ -92,6 +92,7 @@ beforeEach(() => {
   readRequest = async () => Response.json({ updated: 1, readAt: "2026-11-16T03:00:00.000Z" });
   fetchMock = vi.fn(async (input, init) => {
     const url = String(input);
+    if (url.startsWith("/api/store-changes")) return Response.json({ token: "baseline", taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 });
     if (url.startsWith("/api/staff/tasks")) return Response.json(payload);
     if (url === "/api/push/subscriptions") return pushRequest(init);
     if (url === "/api/staff/notifications") return readRequest();
@@ -306,7 +307,9 @@ describe("deliberate device push setup", () => {
   it("checks backend readiness and registers before requesting permission, then converts the public key", async () => {
     const apis = installPushApis("default"); await render(); await enable();
     expect(pushCalls("GET")).toHaveLength(1); expect(apis.requestPermission).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.invocationCallOrder[1]).toBeLessThan(apis.worker.getRegistration.mock.invocationCallOrder[0]);
+    const readinessCall = fetchMock.mock.calls.findIndex(([input, init]) => String(input) === "/api/push/subscriptions" && !init?.method);
+    expect(readinessCall).toBeGreaterThanOrEqual(0);
+    expect(fetchMock.mock.invocationCallOrder[readinessCall]).toBeLessThan(apis.worker.getRegistration.mock.invocationCallOrder[0]);
     expect(apis.worker.getRegistration.mock.invocationCallOrder[0]).toBeLessThan(apis.requestPermission.mock.invocationCallOrder[0]);
     expect(apis.subscribe).toHaveBeenCalledWith({ userVisibleOnly: true, applicationServerKey: new Uint8Array([1, 2, 3, 4]) });
     expect(JSON.parse(String(pushCalls("POST")[0][1]?.body))).toEqual(subscription.toJSON());

@@ -7,6 +7,7 @@ import type { Session } from "next-auth";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { EslScannerModal, type TaskSummary } from "@/components/esl-scanner-modal";
 import { Badge } from "@/components/ui/badge";
+import { useStoreChangePolling } from "@/lib/use-store-change-polling";
 import { TASK_STATUS_PRESENTATION } from "@/lib/task-status";
 import { Logo } from "@/components/logo";
 import { DEMO_ACCOUNTS } from "@/lib/demo-roles";
@@ -47,6 +48,9 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const readPendingRef = useRef<{ storeId: string; previous: StaffNotification[]; readAt: string } | null>(null);
   const readVersionsRef = useRef(new Map<string, number>());
   const confirmedReadsRef = useRef(new Map<string, Map<string, string>>());
+  const loadGenerationRef = useRef(0);
+  const loadStoreIdRef = useRef<string | null>(storeId);
+  const activeLoadRef = useRef<{ controller: AbortController; promise: Promise<void>; followup?: Promise<void> } | null>(null);
   const managerOversight = user.role === "MANAGER";
 
   const mergeConfirmedReads = useCallback((payload: Payload): Payload => {
@@ -58,37 +62,69 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   }, []);
 
   const notify = useCallback((message: string, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast(null), 4200); }, []);
-  const load = useCallback(async () => {
-    if (!storeId) return;
+  const load = useCallback(async function loadStore(refreshAfterPending = false): Promise<void> {
+    if (!storeId || storeId !== loadStoreIdRef.current) return;
+    const generation = loadGenerationRef.current;
+    const active = activeLoadRef.current;
+    if (active) {
+      if (!refreshAfterPending) return active.promise;
+      // A change detected during an older GET must not be consumed by that snapshot.
+      active.followup ??= active.promise.then(() => {
+        if (generation === loadGenerationRef.current) return loadStore();
+      });
+      return active.followup;
+    }
+    const controller = new AbortController();
     const readVersion = readVersionsRef.current.get(storeId) || 0;
-    const isCurrentReadVersion = () => readVersion === (readVersionsRef.current.get(storeId) || 0);
-    try {
-      const response = await fetch(`/api/staff/tasks?storeId=${storeId}`, { cache: "no-store" });
-      if (!response.ok) throw new Error();
-      const payload = mergeConfirmedReads(await response.json() as Payload);
-      if (!isCurrentReadVersion()) return;
-      const pendingRead = readPendingRef.current;
-      const pendingIds = new Set(pendingRead?.previous.filter((item) => !item.readAt).map((item) => item.id));
-      setData(pendingRead?.storeId === storeId ? {
-        ...payload,
-        notifications: payload.notifications.map((item) => !item.readAt && pendingIds.has(item.id) ? { ...item, readAt: pendingRead.readAt } : item),
-      } : payload);
-      await cacheStaffPayload(storeId, payload); setOnline(true);
-    } catch {
-      const cached = await getCachedStaffPayload<Payload>(storeId);
-      if (!isCurrentReadVersion()) return;
-      if (cached) { setData(mergeConfirmedReads(cached)); setOnline(false); }
-      else notify("Không thể tải nhiệm vụ. Kiểm tra kết nối mạng.", true);
-    } finally { setLoading(false); }
+    const isCurrent = () => !controller.signal.aborted && generation === loadGenerationRef.current;
+    const isCurrentReadVersion = () => isCurrent() && readVersion === (readVersionsRef.current.get(storeId) || 0);
+    const promise = (async () => {
+      try {
+        const response = await fetch(`/api/staff/tasks?storeId=${encodeURIComponent(storeId)}`, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const payload = mergeConfirmedReads(await response.json() as Payload);
+        if (!isCurrentReadVersion()) return;
+        const pendingRead = readPendingRef.current;
+        const pendingIds = new Set(pendingRead?.previous.filter((item) => !item.readAt).map((item) => item.id));
+        setData(pendingRead?.storeId === storeId ? {
+          ...payload,
+          notifications: payload.notifications.map((item) => !item.readAt && pendingIds.has(item.id) ? { ...item, readAt: pendingRead.readAt } : item),
+        } : payload);
+        await cacheStaffPayload(storeId, payload);
+        if (isCurrent()) setOnline(true);
+      } catch {
+        if (!isCurrent()) return;
+        const cached = await getCachedStaffPayload<Payload>(storeId);
+        if (!isCurrentReadVersion()) return;
+        if (cached) { setData(mergeConfirmedReads(cached)); setOnline(false); }
+        else notify("Không thể tải nhiệm vụ. Kiểm tra kết nối mạng.", true);
+      } finally {
+        if (isCurrent()) setLoading(false);
+        if (activeLoadRef.current?.controller === controller) activeLoadRef.current = null;
+      }
+    })();
+    activeLoadRef.current = { controller, promise };
+    return promise;
   }, [storeId, notify, mergeConfirmedReads]);
 
-  useEffect(() => { const initialLoad = window.setTimeout(() => void load(), 0); const timer = window.setInterval(() => void load(), 15_000); return () => { clearTimeout(initialLoad); clearInterval(timer); }; }, [load]);
+  useEffect(() => {
+    loadStoreIdRef.current = storeId;
+    const initialLoad = window.setTimeout(() => void load(), 0);
+    return () => {
+      clearTimeout(initialLoad);
+      loadStoreIdRef.current = null;
+      loadGenerationRef.current += 1;
+      activeLoadRef.current?.controller.abort();
+      activeLoadRef.current = null;
+    };
+  }, [load, storeId]);
+  useStoreChangePolling({ storeId, onChange: () => load(true) });
   useEffect(() => {
     const sync = async () => { setOnline(navigator.onLine); if (navigator.onLine) { const result = await flushOfflineMutations(); setQueueCount(result.remaining); if (result.conflicts.length) notify("Một cập nhật offline bị xung đột. Hãy kiểm đếm lại.", true); await load(); } };
-    window.addEventListener("online", sync); window.addEventListener("offline", sync); document.addEventListener("visibilitychange", sync);
+    window.addEventListener("online", sync); window.addEventListener("offline", sync);
     offlineQueueCount().then(setQueueCount);
     const initialNetworkState = window.setTimeout(() => setOnline(navigator.onLine), 0);
-    return () => { clearTimeout(initialNetworkState); window.removeEventListener("online", sync); window.removeEventListener("offline", sync); document.removeEventListener("visibilitychange", sync); };
+    return () => { clearTimeout(initialNetworkState); window.removeEventListener("online", sync); window.removeEventListener("offline", sync); };
   }, [load, notify]);
 
   const activeTasks = useMemo(() => data?.tasks.filter((task) => !["COMPLETED", "CANCELLED"].includes(task.status)) || [], [data]);
@@ -107,7 +143,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     }
     const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     if (!response.ok) { const result = await response.json().catch(() => null); notify(result?.error?.message || "Không thể cập nhật", true); return false; }
-    notify(success); await load(); return true;
+    notify(success); await load(true); return true;
   }
 
   async function verifyEsl() {

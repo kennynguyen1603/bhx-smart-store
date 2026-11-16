@@ -1312,3 +1312,75 @@ test("status badge renders all five Vietnamese states alongside priority on mobi
     await expect(rows.nth(index).locator('[data-slot="badge"]')).toBeVisible();
   }
 });
+
+test("realtime task sync reaches Staff then Admin and Manager within six seconds", async ({ page: admin, browser }) => {
+  test.setTimeout(120_000);
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const staffUser = await prisma.user.findUniqueOrThrow({ where: { email: "staff@demo.bhx" }, include: { userStores: true } });
+  const storeId = staffUser.userStores.find(s => s.isDefault)!.storeId;
+  const inventory = await prisma.inventory.findFirstOrThrow({ where: { storeId }, include: { product: true } });
+  const supplier = await prisma.supplier.findFirstOrThrow({ where: { active: true } });
+  const marker = `realtime-${Date.now()}`;
+  const product = await prisma.product.create({ data: { sku: marker, barcode: marker, name: marker, searchText: marker, category: "Test", unit: "Hộp", basePriceVnd: 10000 } });
+  await prisma.inventory.create({ data: { storeId, productId: product.id, shelfId: inventory.shelfId, onShelf: 5, backroom: 10, capacity: 20, lowThreshold: 2 } });
+  const lot = await prisma.lot.create({ data: { storeId, productId: product.id, supplierId: supplier.id, batchCode: marker, origin: "Test", receivedAt: new Date(), expiryDate: new Date(Date.now() + 2 * 86400000), quantity: 10, status: "MARKED_DOWN", markdownPercent: 10, markdownPriceVnd: Math.round(inventory.product.basePriceVnd * .9) } });
+  const staffContext = await browser.newContext(), managerContext = await browser.newContext();
+  let taskId: string | undefined;
+  try {
+    await authenticateStaffApp(admin, "admin@demo.bhx"); await admin.goto("/admin");
+    await admin.locator(".store-selector select").selectOption(storeId); await admin.getByRole("button", { name: "Nhiệm vụ", exact: true }).click();
+    const staff = await staffContext.newPage(), manager = await managerContext.newPage();
+    await authenticateStaffApp(staff, "staff@demo.bhx"); await staff.getByRole("button", { name: /^Nhiệm vụ/ }).click();
+    await authenticateStaffApp(manager, "manager@demo.bhx"); await manager.getByRole("button", { name: /^Nhiệm vụ/ }).click();
+    // Wait for actual browser checks so every client has a baseline before the write.
+    await Promise.all([admin, staff, manager].map(client => client.waitForResponse(response => new URL(response.url()).pathname === "/api/store-changes" && response.ok(), { timeout: 6000 })));
+    const createdAt = Date.now();
+    const created = await admin.request.post("/api/admin/tasks", { data: { storeId, productId: product.id, shelfId: inventory.shelfId, lotId: lot.id, assigneeId: staffUser.id, type: "FEFO", priority: "HIGH", note: marker } });
+    expect(created.status()).toBe(201); const task = (await created.json()).task; taskId = task.id;
+    const staffRow = staff.locator(".task-row").filter({ hasText: marker });
+    await expect(staffRow).toBeVisible({ timeout: 6000 }); const staffDelay = Date.now() - createdAt; expect(staffDelay).toBeLessThan(6000);
+    await expect(admin.locator(".admin-task-table tbody tr").filter({ hasText: marker })).toContainText("Mới", { timeout: 6000 });
+    await staffRow.click(); await staff.getByRole("button", { name: "Bắt đầu", exact: true }).click();
+    await expect(staff.locator(".staff-task-modal")).toContainText("Đang làm");
+    const completedResponse = staff.waitForResponse(r => r.url().endsWith(`/api/staff/tasks/${task.id}/fefo`) && r.request().method() === "POST");
+    await staff.getByRole("button", { name: "Xác nhận đã dán nhãn", exact: true }).click();
+    expect((await completedResponse).ok()).toBe(true); const completedAt = Date.now();
+    await expect(admin.locator(".admin-task-table tbody tr").filter({ hasText: marker })).toContainText("Hoàn thành", { timeout: 6000 });
+    await manager.getByRole("button", { name: "Hoàn thành", exact: true }).click();
+    await expect(manager.locator(".task-row").filter({ hasText: marker })).toContainText("Hoàn thành", { timeout: Math.max(1, 6000 - (Date.now() - completedAt)) });
+    const oversightDelay = Date.now() - completedAt; expect(oversightDelay).toBeLessThan(6000);
+    console.log(`realtime: Admin→Staff ${staffDelay}ms; Staff→Admin+Manager ${oversightDelay}ms`);
+  } finally {
+    await Promise.allSettled([staffContext.close(), managerContext.close()]);
+    if (taskId) {
+      await prisma.notification.deleteMany({ where: { taskId } });
+      await prisma.mutationReceipt.deleteMany({ where: { response: { path: ["task", "id"], equals: taskId } } });
+      await prisma.task.delete({ where: { id: taskId } });
+    }
+    await prisma.auditLog.deleteMany({ where: { entityType: "Lot", entityId: lot.id } });
+    await prisma.lot.delete({ where: { id: lot.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  }
+});
+
+for (const role of ["staff", "admin"] as const) {
+  test(`hidden polling makes zero requests and resumes immediately for ${role}`, async ({ page }) => {
+    await page.addInitScript(() => {
+      let visible = true;
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible ? "visible" : "hidden" });
+      (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility = value => { visible = value; document.dispatchEvent(new Event("visibilitychange")); };
+    });
+    await authenticateStaffApp(page, `${role}@demo.bhx`); if (role === "admin") await page.goto("/admin");
+    await expect(page.locator(".workspace-header h1")).toBeVisible();
+    const requests: string[] = [];
+    page.on("request", request => { const path = new URL(request.url()).pathname; if (["/api/store-changes", "/api/staff/tasks", "/api/admin/overview"].includes(path)) requests.push(path); });
+    // Observe a normal visible tick first, then isolate the hidden window.
+    await expect.poll(() => requests.filter(path => path === "/api/store-changes").length, { timeout: 6000 }).toBeGreaterThan(0);
+    await page.evaluate(() => (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility(false));
+    const count = requests.length; await page.waitForTimeout(8500); expect(requests.length - count).toBe(0);
+    const resume = page.waitForRequest(request => new URL(request.url()).pathname === "/api/store-changes", { timeout: 1500 });
+    await page.evaluate(() => (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility(true)); await resume;
+    console.log(`${role}: hidden requests=0 over 8500ms; visible return immediate`);
+  });
+}

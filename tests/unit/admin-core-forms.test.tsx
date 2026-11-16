@@ -21,6 +21,7 @@ beforeEach(() => {
   writes = []; readCount = 0; failRefresh = false;
   write = async () => Response.json({ id: "saved" });
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/store-changes")) return Response.json({ token: "baseline", taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 });
     if (!init?.method) {
       readCount++;
       if (failRefresh) throw new TypeError("Failed to fetch");
@@ -124,7 +125,7 @@ it("rejects on-shelf quantities above capacity before PUT", async () => {
 });
 it("disables store editing until a persisted store is available", async () => {
   let release!: (response: Response) => void;
-  vi.stubGlobal("fetch", () => new Promise<Response>((done) => { release = done; }));
+  vi.stubGlobal("fetch", (url: string) => url.startsWith("/api/store-changes") ? Promise.resolve(Response.json({ token: "baseline", taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 })) : new Promise<Response>((done) => { release = done; }));
   await act(async () => root.render(<AdminApp user={user} />)); await settle();
   expect(button("Sửa cửa hàng").disabled).toBe(true);
   await act(async () => release(Response.json(overview)));
@@ -144,6 +145,7 @@ it("closes immediately after write success even while the overview refresh is un
   await open("product");
   let releaseRefresh!: (value: Response) => void;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/store-changes")) return Response.json({ token: "baseline", taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 });
     if (!init?.method) return new Promise<Response>((done) => { releaseRefresh = done; });
     writes.push({ url, method: init.method, body: JSON.parse(String(init.body)) });
     return Response.json({ id: "saved" });

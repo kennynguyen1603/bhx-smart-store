@@ -30,7 +30,8 @@ beforeEach(() => {
   readCount = 0;
   writeRequest = async () => Response.json({ ok: true });
   refreshRequest = async () => Response.json(overview);
-  vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/store-changes")) return Response.json({ token: "baseline", taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 });
     if (!init?.method) {
       readCount += 1;
       return readCount === 1 ? Response.json(overview) : refreshRequest();

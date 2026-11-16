@@ -299,6 +299,7 @@ model Task {
   createdAt   DateTime     @default(now()) @db.Timestamptz
   updatedAt   DateTime     @updatedAt @db.Timestamptz
 
+  @@index([storeId, updatedAt])
   @@index([storeId, status, priority])
   @@index([productId, shelfId, type, status])
 }
@@ -409,6 +410,8 @@ model Notification {
   createdAt DateTime         @default(now()) @db.Timestamptz
 
   @@index([userId, readAt, createdAt])
+  @@index([userId, storeId, createdAt])
+  @@index([userId, storeId, readAt])
 }
 
 model PushSubscription {
