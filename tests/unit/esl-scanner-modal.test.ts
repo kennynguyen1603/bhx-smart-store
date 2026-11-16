@@ -5,9 +5,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { EslScannerModal, type TaskSummary } from "@/components/esl-scanner-modal";
 
-// Camera and QR rendering are independent of the lookup lifecycle under test.
+// Camera access is external; render the real QR component with a deterministic encoder.
 vi.mock("@/components/barcode-scanner", () => ({ BarcodeScanner: () => null }));
-vi.mock("@/components/esl-qr-demo", () => ({ EslQrDemo: () => null }));
+vi.mock("qrcode", () => ({ default: { toDataURL: async () => "data:image/png;base64,cXI=" } }));
 
 type PendingLookup = {
   signal: AbortSignal | null | undefined;
@@ -69,6 +69,21 @@ describe("ESL scanner lookup cancellation", () => {
       container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
   }
+
+  it.each([0, 1, 2])("keeps product and QR visible for %i tasks until explicit selection", async (count) => {
+    const tasks = Array.from({ length: count }, (_, index) => ({ ...task, id: `task-${index}`, title: `Task ${index}` }));
+    await lookup("ESL-CURRENT");
+    await act(async () => pending[0].resolve(response("ESL-CURRENT", tasks)));
+    expect(container.querySelector(".product-summary")?.textContent).toContain("Product ESL-CURRENT");
+    expect(container.querySelector('img[alt="QR cho ESL-CURRENT"]')).not.toBeNull();
+    expect(onSelectTask).not.toHaveBeenCalled();
+    const choices = [...container.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.includes("Mở nhiệm vụ"));
+    expect(choices).toHaveLength(count);
+    if (count) {
+      await act(async () => choices[count - 1].click());
+      expect(onSelectTask).toHaveBeenCalledExactlyOnceWith(tasks[count - 1]);
+    } else expect(container.textContent).toContain("Không có nhiệm vụ đang mở");
+  });
 
   it.each(["success", "failure"])("aborts a superseded lookup and ignores its late %s", async (outcome) => {
     await lookup("ESL-OLD");

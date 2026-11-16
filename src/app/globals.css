@@ -287,3 +287,12 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
   .kiosk-header > button { justify-self: start; }
   .kiosk-actions,.kiosk-actions .form-control { min-width: 0; }
 }
+
+/* Source-owned shadcn status badges share existing semantic color tokens. */
+.ui-badge{display:inline-flex;align-items:center;justify-content:center;gap:5px;max-width:100%;padding:4px 8px;border:1px solid transparent;border-radius:20px;font-size:12px;font-weight:700;line-height:1.5;white-space:nowrap}
+.ui-badge-default{color:var(--green-700);background:var(--green-50)}
+.ui-badge-secondary{color:#8a6700;background:#fff5bc}
+.ui-badge-destructive{color:#a52f2f;background:var(--red-50)}
+.ui-badge-success{color:#45675a;background:#edf2ef}
+.ui-badge-outline{color:var(--muted);background:white;border-color:var(--line)}
+.esl-task-choices .task-row{grid-template-columns:minmax(0,1fr) auto}

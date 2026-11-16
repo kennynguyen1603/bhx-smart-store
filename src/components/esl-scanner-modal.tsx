@@ -74,7 +74,6 @@ export function EslScannerModal({
       if (generation !== lookupGeneration.current) return;
       setCode(payload.esl.code);
       setResult(payload);
-      if (payload.tasks.length === 1) onSelectTask(payload.tasks[0]);
     } catch {
       if (generation === lookupGeneration.current) setError("Mã ESL không tồn tại hoặc thuộc cửa hàng khác.");
     } finally {
@@ -105,7 +104,7 @@ export function EslScannerModal({
           {result && <div className="esl-lookup-result">
             <div className="product-summary"><span>🏷️</span><span><small>{result.esl.shelf.label}</small><strong>{result.esl.product.name}</strong><small>{result.esl.code}</small></span></div>
             {result.tasks.length === 0 && <div className="empty-state">Không có nhiệm vụ đang mở</div>}
-            {result.tasks.length > 1 && <section className="esl-task-choices"><h3>Chọn nhiệm vụ cần mở</h3>{result.tasks.map((task) => <button className="task-row" key={task.id} onClick={() => onSelectTask(task)}><span className="task-copy"><strong>{task.title}</strong><span>{task.type} · {task.status}</span></span></button>)}</section>}
+            {result.tasks.length > 0 && <section className="esl-task-choices"><h3>Chọn nhiệm vụ cần mở</h3>{result.tasks.map((task) => <button className="task-row" key={task.id} onClick={() => onSelectTask(task)}><span className="task-copy"><strong>{task.title}</strong><span>{task.type} · {task.status}</span></span><span>Mở nhiệm vụ</span></button>)}</section>}
             <EslQrDemo code={result.esl.code} />
           </div>}
         </div>

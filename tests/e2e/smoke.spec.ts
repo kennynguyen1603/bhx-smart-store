@@ -593,14 +593,16 @@ test("Staff history is private while Manager completed tasks show oversight deta
     const row = page.locator(".task-row").filter({ hasText: task.title });
     await expect(row).toContainText("Nhân viên Khác");
     await expect(row).toContainText(new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(completedAt));
-    await expect(row).toBeDisabled();
+    await expect(row).toBeEnabled();
+    await row.click();
+    await expect(page.getByText("Chế độ chỉ xem")).toBeVisible();
   } finally {
     await prisma.task.delete({ where: { id: task.id } });
     await prisma.user.delete({ where: { id: otherStaff.id } });
   }
 });
 
-test("ESL scanner handles zero, one, many, and inaccessible store results", async ({ page }) => {
+test("ESL lookup keeps zero, one, many, and inaccessible store results stable", async ({ page }) => {
   test.setTimeout(120_000);
   nextEnv.loadEnvConfig(process.cwd());
   const { prisma } = await import("../../src/lib/db");
@@ -675,6 +677,9 @@ test("ESL scanner handles zero, one, many, and inaccessible store results", asyn
 
     await input.fill(esls[1].code);
     await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
+    await expect(page.getByRole("img", { name: `QR cho ${esls[1].code}` })).toBeVisible();
+    await expect(page.locator(".staff-task-modal")).toHaveCount(0);
+    await page.locator(".esl-task-choices").getByRole("button", { name: new RegExp(oneTask.title) }).click();
     await expect(page.getByRole("heading", { name: oneTask.title })).toBeVisible();
     await page.getByRole("button", { name: "Để sau" }).click();
 
@@ -702,7 +707,7 @@ test("ESL scanner handles zero, one, many, and inaccessible store results", asyn
   }
 });
 
-test("Manager opens single and multi-task ESL results read-only without mutation requests", async ({ page }) => {
+test("ESL lookup lets Manager open single and multi-task results read-only without mutation requests", async ({ page }) => {
   test.setTimeout(120_000);
   nextEnv.loadEnvConfig(process.cwd());
   const { prisma } = await import("../../src/lib/db");
@@ -730,6 +735,8 @@ test("Manager opens single and multi-task ESL results read-only without mutation
     await page.getByRole("button", { name: "Quét ESL" }).click();
     await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill(singleEsl.code);
     await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
+    await expect(page.getByRole("img", { name: `QR cho ${singleEsl.code}` })).toBeVisible();
+    await page.locator(".esl-task-choices").getByRole("button", { name: new RegExp(single.title) }).click();
     await expect(page.getByRole("heading", { name: single.title })).toBeVisible();
     await expect(page.getByText("Chế độ chỉ xem")).toBeVisible();
     await expect(page.getByRole("button", { name: "Xác nhận bổ sung" })).toHaveCount(0);
@@ -790,10 +797,10 @@ test("ESL lookup uses the newest response and opens a task missing from stale po
 
     await page.getByRole("button", { name: "Quét ESL" }).click();
     await page.getByRole("textbox", { name: "Mã ESL tra cứu" }).fill(taskEsl.code);
-    const refreshAfterStart = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/staff/tasks");
     await page.getByRole("button", { name: "Tra cứu", exact: true }).click();
+    await expect(page.getByRole("img", { name: `QR cho ${taskEsl.code}` })).toBeVisible();
+    await page.locator(".esl-task-choices").getByRole("button", { name: new RegExp(freshTask.title) }).click();
     await expect(page.getByRole("heading", { name: freshTask.title })).toBeVisible();
-    await refreshAfterStart;
     await page.getByRole("button", { name: "Để sau" }).click();
 
     const multiTasks = await Promise.all(["RESTOCK", "FEFO"].map((type, index) => prisma.task.create({
@@ -1231,4 +1238,77 @@ test("integration loading blocks duplicate writes until the overview refresh att
   await expect(action).toBeEnabled();
   expect(await simulator.getByRole("button").evaluateAll((buttons) => buttons.every((button) => !(button as HTMLButtonElement).disabled))).toBe(true);
   expect(writeCount).toBe(1);
+});
+
+function taskInteractionPayload() {
+  const tasks = (["OPEN", "BLOCKED", "IN_PROGRESS", "COMPLETED", "CANCELLED"] as const).map((status) => ({
+    id: `inspect-${status}`, type: "RESTOCK", status, priority: "HIGH", title: `Kiểm tra ${status}`, note: "Chi tiết nhiệm vụ",
+    createdAt: "2026-11-16T00:00:00Z", completedAt: null, assignee: null,
+    product: { id: "product-test", name: "Sữa kiểm thử", emoji: "🥛", basePriceVnd: 17000 },
+    shelf: { id: "shelf-test", code: "K-01", label: "Kệ kiểm thử", esls: [{ code: "ESL-TEST" }] }, lot: null,
+    inventory: { id: "inventory-test", onShelf: 2, backroom: 10, capacity: 12, lowThreshold: 3, version: 4, product: { id: "product-test", name: "Sữa kiểm thử", emoji: "🥛" }, shelf: { id: "shelf-test", code: "K-01", label: "Kệ kiểm thử" } },
+  }));
+  return {
+    stores: [{ id: "store-test", code: "TEST", name: "Cửa hàng kiểm thử", address: "Địa chỉ kiểm thử" }], selectedStoreId: "store-test",
+    tasks, inventories: [], notifications: [], recentEvents: [], metrics: { openTasks: 3, highPriority: 3, lowShelves: 1, fefoTasks: 0, completionRate: 0 },
+  };
+}
+
+for (const status of ["OPEN", "BLOCKED"] as const) {
+  test(`opening task ${status} only inspects until explicit start succeeds once`, async ({ page }) => {
+    const payload = taskInteractionPayload();
+    const writes: { method: string; path: string; body: Record<string, unknown> }[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((done) => { release = done; });
+    await page.route("**/api/staff/tasks?**", (route) => route.fulfill({ json: payload }));
+    await page.route(/\/api\/staff\/tasks\/[^/]+\/(start|restock|fefo)$/, async (route) => {
+      writes.push({ method: route.request().method(), path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+      await gate;
+      await route.fulfill({ json: { task: { id: `inspect-${status}`, status: "IN_PROGRESS", startedAt: "2026-11-17T00:00:00Z" } } });
+    });
+    try {
+      await authenticateStaffApp(page, "staff@demo.bhx");
+      await page.locator(".task-row").filter({ hasText: `Kiểm tra ${status}` }).click();
+      const modal = page.locator(".staff-task-modal");
+      await expect(modal.getByRole("heading", { name: `Kiểm tra ${status}` })).toBeVisible();
+      expect(writes).toEqual([]);
+      const start = modal.getByRole("button", { name: "Bắt đầu", exact: true });
+      await start.evaluate((element) => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+      await expect.poll(() => writes.length).toBe(1);
+      await expect(modal.getByRole("button", { name: "Đang bắt đầu…" })).toBeDisabled();
+      await expect(modal.locator('[data-slot="badge"]')).toHaveText(status === "OPEN" ? "Mới" : "Bị chặn");
+      release();
+      await expect(modal.locator('[data-slot="badge"]')).toHaveText("Đang làm");
+      await expect(modal.getByRole("button", { name: "Bắt đầu", exact: true })).toHaveCount(0);
+      expect(writes).toEqual([{ method: "POST", path: `/api/staff/tasks/inspect-${status}/start`, body: { clientMutationId: expect.any(String) } }]);
+    } finally { release(); }
+  });
+}
+
+test("opening task as Manager shows details without start or completion controls", async ({ page }) => {
+  const writes: string[] = [];
+  await page.route("**/api/staff/tasks?**", (route) => route.fulfill({ json: taskInteractionPayload() }));
+  page.on("request", (request) => { if (request.method() !== "GET" && /\/api\/staff\/tasks\//.test(request.url())) writes.push(request.url()); });
+  await authenticateStaffApp(page, "manager@demo.bhx");
+  await page.locator(".task-row").filter({ hasText: "Kiểm tra OPEN" }).click();
+  const modal = page.locator(".staff-task-modal");
+  await expect(modal.getByRole("heading", { name: "Kiểm tra OPEN" })).toBeVisible();
+  await expect(modal.getByText("Chế độ chỉ xem", { exact: false })).toBeVisible();
+  await expect(modal.getByRole("button", { name: /Bắt đầu|Xác nhận/ })).toHaveCount(0);
+  expect(writes).toEqual([]);
+});
+
+test("status badge renders all five Vietnamese states alongside priority on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/api/staff/tasks?**", (route) => route.fulfill({ json: taskInteractionPayload() }));
+  await authenticateStaffApp(page, "staff@demo.bhx");
+  await page.getByRole("button", { name: "Nhiệm vụ", exact: false }).click();
+  await page.getByRole("button", { name: "Bổ sung", exact: true }).click();
+  const rows = page.locator(".task-row");
+  await expect(rows).toHaveCount(5);
+  for (const [index, label] of ["Mới", "Bị chặn", "Đang làm", "Hoàn thành", "Đã huỷ"].entries()) {
+    await expect(rows.nth(index).locator('[data-slot="badge"]')).toHaveText(label);
+    await expect(rows.nth(index).locator(".badge.high")).toHaveText("HIGH");
+    await expect(rows.nth(index).locator('[data-slot="badge"]')).toBeVisible();
+  }
 });

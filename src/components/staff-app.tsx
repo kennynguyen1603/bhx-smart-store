@@ -6,10 +6,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "next-auth";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { EslScannerModal, type TaskSummary } from "@/components/esl-scanner-modal";
+import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import { Logo } from "@/components/logo";
 import { DEMO_ACCOUNTS } from "@/lib/demo-roles";
 import { StaffNotificationCenter, type StaffNotification } from "@/components/staff-notification-center";
 import { cacheStaffPayload, enqueueMutation, flushOfflineMutations, getCachedStaffPayload, markCachedStaffNotificationsRead, offlineQueueCount } from "@/lib/offline";
+
+type TaskStatus = TaskSummary["status"];
+export const TASK_STATUS_PRESENTATION: Record<TaskStatus, { label: string; variant: BadgeVariant }> = {
+  OPEN: { label: "Mới", variant: "default" },
+  IN_PROGRESS: { label: "Đang làm", variant: "secondary" },
+  BLOCKED: { label: "Bị chặn", variant: "destructive" },
+  COMPLETED: { label: "Hoàn thành", variant: "success" },
+  CANCELLED: { label: "Đã huỷ", variant: "outline" },
+};
+
+function TaskStatusBadge({ status }: { status: TaskStatus }) {
+  const { label, variant } = TASK_STATUS_PRESENTATION[status];
+  return <Badge variant={variant}>{label}</Badge>;
+}
 
 type StoreOption = { id: string; code: string; name: string; address: string };
 type Inventory = { id: string; onShelf: number; backroom: number; capacity: number; lowThreshold: number; version: number; product: { id: string; name: string; emoji: string }; shelf: { id: string; code: string; label: string } };
@@ -25,6 +40,8 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const [tab, setTab] = useState<"overview" | "tasks" | "history" | "scanner">("overview");
   const [filter, setFilter] = useState("ACTIVE");
   const [selected, setSelected] = useState<Task | null>(null);
+  const [starting, setStarting] = useState(false);
+  const startPendingRef = useRef(false);
   const [scanned, setScanned] = useState(false);
   const [scanCode, setScanCode] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -91,7 +108,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     const id = String(body.clientMutationId || uuid());
     const payload = { ...body, clientMutationId: id };
     if (!navigator.onLine) {
-      await enqueueMutation({ id, url, method: "POST", body: payload, createdAt: new Date().getTime() }); setQueueCount((count) => count + 1); notify("Đã lưu thao tác offline. Hệ thống sẽ tự đồng bộ."); return true;
+      await enqueueMutation({ id, url, method: "POST", body: payload, createdAt: new Date().getTime() }); setQueueCount((count) => count + 1); notify("Đã lưu thao tác offline. Hệ thống sẽ tự đồng bộ."); return "queued" as const;
     }
     const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     if (!response.ok) { const result = await response.json().catch(() => null); notify(result?.error?.message || "Không thể cập nhật", true); return false; }
@@ -108,7 +125,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
 
   async function completeTask() {
     if (!selected) return;
-    let ok = false;
+    let ok: boolean | "queued" = false;
     if (selected.type === "RESTOCK") {
       if (!scanned || !selected.inventory) { notify("Hãy quét và xác minh ESL trước.", true); return; }
       ok = await mutation(`/api/staff/tasks/${selected.id}/restock`, { quantity, expectedVersion: selected.inventory.version, clientMutationId: uuid() }, "Đã cập nhật tồn kệ và tắt LED.");
@@ -157,7 +174,31 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     }
   }
 
-  async function openTask(task: Task) { setSelected(task); setScanned(false); setScanCode(task.shelf.esls[0]?.code || ""); setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1)); if(!managerOversight && ["OPEN","BLOCKED"].includes(task.status)) await mutation(`/api/staff/tasks/${task.id}/start`,{clientMutationId:uuid()},"Đã bắt đầu nhiệm vụ."); }
+  function openTask(task: Task) {
+    setSelected(task);
+    setScanned(false);
+    setScanCode(task.shelf.esls[0]?.code || "");
+    setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1));
+  }
+
+  async function startSelectedTask(): Promise<void> {
+    if (!selected || user.role !== "STAFF" || !["OPEN", "BLOCKED"].includes(selected.status) || startPendingRef.current) return;
+    const taskId = selected.id;
+    startPendingRef.current = true;
+    setStarting(true);
+    try {
+      const ok = await mutation(`/api/staff/tasks/${taskId}/start`, { clientMutationId: uuid() }, "Đã bắt đầu nhiệm vụ.");
+      if (ok === true) {
+        setSelected((current) => current?.id === taskId ? { ...current, status: "IN_PROGRESS" } : current);
+        setData((current) => current ? { ...current, tasks: current.tasks.map((task) => task.id === taskId ? { ...task, status: "IN_PROGRESS" } : task) } : current);
+      }
+    } catch {
+      notify("Không thể bắt đầu nhiệm vụ. Hãy thử lại.", true);
+    } finally {
+      startPendingRef.current = false;
+      setStarting(false);
+    }
+  }
   function selectScannedTask(taskSummary: TaskSummary) {
     const task = taskSummary as Task;
     setData((current) => current ? { ...current, tasks: [...current.tasks.filter((item) => item.id !== task.id), task] } : current);
@@ -177,7 +218,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
         {tab === "history" && <section className="panel"><PanelTitle title="Hoạt động gần đây" /><div className="log-list">{data?.recentEvents.map((event) => <div className="log-row" key={event.id}><code>{event.type}</code><span><strong>{event.task.product.name}</strong><br />{event.note || event.task.shelf.label}</span><time>{time(event.createdAt)}</time></div>)}</div></section>}
       </section>
       {tab === "scanner" && storeId && <EslScannerModal storeId={storeId} onSelectTask={selectScannedTask} onClose={() => setTab("overview")} />}
-      {selected && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}><section className="modal staff-task-modal"><button className="icon-button modal-close" onClick={() => setSelected(null)} aria-label="Đóng nhiệm vụ"><X /></button><header className="modal-head"><span className="section-label">{selected.type} · {selected.priority}</span><h2>{selected.title}</h2><p>{selected.note}</p></header><div className="modal-body"><div className="product-summary"><span>{selected.product.emoji}</span><span><small>{selected.shelf.label}</small><strong>{selected.product.name}</strong><small>{selected.shelf.code}</small></span><span className={`badge ${selected.status.toLowerCase()}`}>{selected.status}</span></div>{managerOversight && <div className="alert-box">Chế độ chỉ xem. Quản lý không thể bắt đầu hoặc hoàn thành nhiệm vụ.</div>}{selected.type === "RESTOCK" ? <><div className="detail-grid"><div className="detail-box"><span>Tồn trên kệ</span><strong>{selected.inventory?.onShelf}/{selected.inventory?.capacity}</strong></div><div className="detail-box"><span>Tồn kho sau</span><strong>{selected.inventory?.backroom}</strong></div></div>{!managerOversight && <><div className="esl-verification"><BarcodeScanner onDetected={(value) => { setScanCode(value); setScanned(false); }} label="Quét mã ESL" /><div className="manual-scan-label"><span>Hoặc nhập mã thiết bị</span><small>Mã được in ở cạnh dưới của nhãn điện tử</small></div><div className="manual-scan"><input className="form-control" value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanned(false); }} placeholder="Ví dụ: ESL-NT-Q5-L-02" aria-label="Mã ESL" /><button className="button" onClick={verifyEsl}>Xác minh</button></div>{scanned && <div className="alert-box scan-success">✓ ESL khớp đúng sản phẩm và vị trí kệ.</div>}</div><label className="muted quantity-label">Số lượng bổ sung<div className="number-control"><button onClick={() => setQuantity(Math.max(1, quantity - 1))} aria-label="Giảm số lượng">−</button><input className="form-control" type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} /><button onClick={() => setQuantity(quantity + 1)} aria-label="Tăng số lượng">+</button></div></label></>}</> : <><div className="detail-grid"><div className="detail-box"><span>Mã lô</span><strong>{selected.lot?.batchCode}</strong></div><div className="detail-box"><span>Hạn sử dụng</span><strong>{selected.lot && new Intl.DateTimeFormat("vi-VN").format(new Date(selected.lot.expiryDate))}</strong></div><div className="detail-box"><span>Nhà cung cấp</span><strong>{selected.lot?.supplier.name}</strong></div><div className="detail-box"><span>Xuất xứ</span><strong>{selected.lot?.origin}</strong></div></div>{!managerOversight && <div className={`alert-box ${selected.type === "QUARANTINE" ? "danger" : ""}`}>{selected.type === "QUARANTINE" ? "Lô đã hết hạn. Di chuyển khỏi khu vực bán và xác nhận cách ly." : "Kiểm tra đúng lô, dán nhãn giảm giá và ưu tiên bán trước."}</div>}</>}</div>{!managerOversight && <footer className="modal-actions"><button className="button" onClick={() => setSelected(null)}>Để sau</button><button className="button primary" onClick={completeTask}>{selected.type === "RESTOCK" ? "Xác nhận bổ sung" : selected.type === "QUARANTINE" ? "Xác nhận cách ly" : "Xác nhận đã dán nhãn"}</button></footer>}</section></div>}
+      {selected && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setSelected(null)}><section className="modal staff-task-modal"><button className="icon-button modal-close" onClick={() => setSelected(null)} aria-label="Đóng nhiệm vụ"><X /></button><header className="modal-head"><span className="section-label">{selected.type} · {selected.priority}</span><h2>{selected.title}</h2><p>{selected.note}</p></header><div className="modal-body"><div className="product-summary"><span>{selected.product.emoji}</span><span><small>{selected.shelf.label}</small><strong>{selected.product.name}</strong><small>{selected.shelf.code}</small></span><TaskStatusBadge status={selected.status} /></div>{managerOversight && <div className="alert-box">Chế độ chỉ xem. Quản lý không thể bắt đầu hoặc hoàn thành nhiệm vụ.</div>}{selected.type === "RESTOCK" ? <><div className="detail-grid"><div className="detail-box"><span>Tồn trên kệ</span><strong>{selected.inventory?.onShelf}/{selected.inventory?.capacity}</strong></div><div className="detail-box"><span>Tồn kho sau</span><strong>{selected.inventory?.backroom}</strong></div></div>{!managerOversight && <><div className="esl-verification"><BarcodeScanner onDetected={(value) => { setScanCode(value); setScanned(false); }} label="Quét mã ESL" /><div className="manual-scan-label"><span>Hoặc nhập mã thiết bị</span><small>Mã được in ở cạnh dưới của nhãn điện tử</small></div><div className="manual-scan"><input className="form-control" value={scanCode} onChange={(e) => { setScanCode(e.target.value); setScanned(false); }} placeholder="Ví dụ: ESL-NT-Q5-L-02" aria-label="Mã ESL" /><button className="button" onClick={verifyEsl}>Xác minh</button></div>{scanned && <div className="alert-box scan-success">✓ ESL khớp đúng sản phẩm và vị trí kệ.</div>}</div><label className="muted quantity-label">Số lượng bổ sung<div className="number-control"><button onClick={() => setQuantity(Math.max(1, quantity - 1))} aria-label="Giảm số lượng">−</button><input className="form-control" type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} /><button onClick={() => setQuantity(quantity + 1)} aria-label="Tăng số lượng">+</button></div></label></>}</> : <><div className="detail-grid"><div className="detail-box"><span>Mã lô</span><strong>{selected.lot?.batchCode}</strong></div><div className="detail-box"><span>Hạn sử dụng</span><strong>{selected.lot && new Intl.DateTimeFormat("vi-VN").format(new Date(selected.lot.expiryDate))}</strong></div><div className="detail-box"><span>Nhà cung cấp</span><strong>{selected.lot?.supplier.name}</strong></div><div className="detail-box"><span>Xuất xứ</span><strong>{selected.lot?.origin}</strong></div></div>{!managerOversight && <div className={`alert-box ${selected.type === "QUARANTINE" ? "danger" : ""}`}>{selected.type === "QUARANTINE" ? "Lô đã hết hạn. Di chuyển khỏi khu vực bán và xác nhận cách ly." : "Kiểm tra đúng lô, dán nhãn giảm giá và ưu tiên bán trước."}</div>}</>}</div>{!managerOversight && <footer className="modal-actions"><button className="button" onClick={() => setSelected(null)}>Để sau</button>{user.role === "STAFF" && ["OPEN", "BLOCKED"].includes(selected.status) && <button className="button primary" onClick={startSelectedTask} disabled={starting}>{starting ? "Đang bắt đầu…" : "Bắt đầu"}</button>}<button className="button primary" onClick={completeTask} disabled={starting}>{selected.type === "RESTOCK" ? "Xác nhận bổ sung" : selected.type === "QUARANTINE" ? "Xác nhận cách ly" : "Xác nhận đã dán nhãn"}</button></footer>}</section></div>}
       {toast && <div className="toast-stack"><div className={`toast ${toast.error ? "error" : ""}`}><strong>{toast.error ? "Có lỗi" : "Đã cập nhật"}</strong>{toast.message}</div></div>}
     </main>
   );
@@ -185,4 +226,4 @@ export function StaffApp({ user }: { user: Session["user"] }) {
 
 function Metric({ icon: Icon, label, value, helper, alert }: { icon: typeof Store; label: string; value: string | number; helper: string; alert?: boolean }) { return <article className={`metric ${alert ? "alert" : ""}`}><span className="metric-icon"><Icon /></span><span><small>{label}</small><strong>{value}</strong><small>{helper}</small></span></article>; }
 function PanelTitle({ title }: { title: string }) { return <header className="panel-header"><h2>{title}</h2></header>; }
-function TaskRow({ task, onClick, managerOversight }: { task: Task; onClick(): void; managerOversight: boolean }) { const Icon = task.type === "RESTOCK" ? PackagePlus : task.type === "QUARANTINE" ? AlertTriangle : Clock3; return <button className="task-row" onClick={managerOversight ? undefined : onClick} disabled={managerOversight}><span className={`task-icon ${task.type !== "RESTOCK" ? "fefo" : ""} ${task.priority === "HIGH" ? "high" : ""}`}><Icon /></span><span className="task-copy"><strong>{task.title}</strong><span>{task.product.name} · {task.shelf.label}{managerOversight && ` · ${task.assignee?.name || "Chưa nhận"}`}</span></span><span className="task-meta"><span className={`badge ${task.status === "BLOCKED" ? "blocked" : task.status === "COMPLETED" ? "completed" : task.priority.toLowerCase()}`}>{task.status === "BLOCKED" ? "Bị chặn" : task.priority}</span><time>{time(task.status === "COMPLETED" && task.completedAt ? task.completedAt : task.createdAt)}</time></span></button>; }
+function TaskRow({ task, onClick, managerOversight }: { task: Task; onClick(): void; managerOversight: boolean }) { const Icon = task.type === "RESTOCK" ? PackagePlus : task.type === "QUARANTINE" ? AlertTriangle : Clock3; return <button className="task-row" onClick={onClick}><span className={`task-icon ${task.type !== "RESTOCK" ? "fefo" : ""} ${task.priority === "HIGH" ? "high" : ""}`}><Icon /></span><span className="task-copy"><strong>{task.title}</strong><span>{task.product.name} · {task.shelf.label}{managerOversight && ` · ${task.assignee?.name || "Chưa nhận"}`}</span></span><span className="task-meta"><TaskStatusBadge status={task.status} /><span className={`badge ${task.priority.toLowerCase()}`}>{task.priority}</span><time>{time(task.status === "COMPLETED" && task.completedAt ? task.completedAt : task.createdAt)}</time></span></button>; }
