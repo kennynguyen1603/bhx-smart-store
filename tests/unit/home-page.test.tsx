@@ -14,7 +14,7 @@ it("presents exactly two primary product experiences under the shared-data hero"
   expect(container.querySelector("h1")?.textContent).toBe("Hai trải nghiệm, một nền dữ liệu");
   const cards = Array.from(container.querySelectorAll("a.experience-card"));
   expect(cards.map((card) => [card.querySelector("strong")?.textContent, card.getAttribute("href")])).toEqual([
-    ["Ứng dụng nhân viên", "/login?callbackUrl=/staff"], ["Kiosk khách hàng", "/kiosk"],
+    ["Ứng dụng nhân viên", "/staff/login"], ["Kiosk khách hàng", "/kiosk"],
   ]);
 });
 
@@ -22,7 +22,7 @@ it("keeps Admin and printable demo labels available as compact secondary links",
   const container = renderHome();
   const links = Array.from(container.querySelectorAll('nav[aria-label="Demo bổ trợ"] a'));
   expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
-    ["Backoffice quản trị", "/login?callbackUrl=/admin"], ["Nhãn ESL demo", "/demo/esl-labels"], ["Mã vạch sản phẩm demo", "/demo/barcodes"],
+    ["Backoffice quản trị", "/admin/login"], ["Nhãn ESL demo", "/demo/esl-labels"], ["Mã vạch sản phẩm demo", "/demo/barcodes"],
   ]);
   expect(links.every((link) => !link.classList.contains("experience-card"))).toBe(true);
   expect(container.querySelector(".data-flow")).toBeNull();

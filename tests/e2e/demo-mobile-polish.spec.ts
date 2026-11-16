@@ -11,9 +11,9 @@ test.setTimeout(60_000);
 async function signIn(page: Page, role: "staff" | "manager" | "admin") {
   // Establish CSRF before the login page's concurrent initial session requests.
   expect((await page.request.get("/api/auth/csrf")).ok()).toBe(true);
-  await page.goto(`/login?callbackUrl=${role === "admin" ? "/staff" : "/admin"}`);
-  await page.getByRole("button", { name: { staff: "Nhân viên — thực hiện nhiệm vụ", manager: "Quản lý — giám sát cửa hàng", admin: "Quản trị — cấu hình hệ thống" }[role], exact: true }).click();
-  await expect(page.getByLabel("Email", { exact: true })).toHaveValue(`${role}@demo.bhx`);
+  await page.goto(`/${role === "admin" ? "admin" : "staff"}/login`);
+  await page.getByLabel("Email", { exact: true }).fill(`${role}@demo.bhx`);
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/${role === "admin" ? "admin" : "staff"}$`), { timeout: 20_000 });
 }
@@ -392,8 +392,8 @@ for (const width of [320, 390, 768]) {
     await page.goto("/");
     await expect(page.locator(".experience-card")).toHaveCount(2);
     await readable(page, [".landing-hero p", ".card-copy > span", ".demo-links a"]);
-    await page.goto("/login");
-    await readable(page, [".login-card p", ".account-chips button", ".login-card input", ".login-card form button"]);
+    await page.goto("/staff/login");
+    await readable(page, [".login-card p", ".login-card input", ".login-card form button"]);
     await page.goto("/demo/esl-labels");
     await readable(page, [".esl-label-toolbar p", ".esl-label-product", ".esl-label-location", ".esl-label-toolbar button"]);
     await page.goto("/kiosk");

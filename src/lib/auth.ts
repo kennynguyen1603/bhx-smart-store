@@ -15,7 +15,7 @@ export const authOptions: NextAuthOptions = {
   pages: { signIn: "/login" },
   providers: [
     CredentialsProvider({
-      name: "Tài khoản BHX Demo",
+      name: "Tài khoản BHX",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Mật khẩu", type: "password" },

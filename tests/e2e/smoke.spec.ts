@@ -13,8 +13,9 @@ async function authenticateStaffApp(page: Page, email: string) {
   expect(loginResponse.ok()).toBe(true);
   const cookies = await page.context().cookies();
   expect(cookies.some((cookie) => cookie.name.endsWith("session-token"))).toBe(true);
-  await page.goto("/staff");
-  await expect(page).toHaveURL((url) => url.pathname === "/staff");
+  const destination = email.startsWith("admin@") ? "/admin" : "/staff";
+  await page.goto(destination);
+  await expect(page).toHaveURL((url) => url.pathname === destination);
 }
 
 test("customer kiosk can search and open a product route", async ({ page }) => {
@@ -541,7 +542,7 @@ test("store section labels do not overlap shelf cards", async ({ page }) => {
 });
 
 test("staff can sign in and see assigned tasks", async ({ page }) => {
-  await page.goto("/login?callbackUrl=/staff");
+  await page.goto("/staff/login");
   await page.getByLabel("Email").fill("staff@demo.bhx");
   await page.locator('input[type="password"]').fill("Demo@123");
   await page.getByRole("button", { name: /Đăng nhập/i }).click();
@@ -1012,8 +1013,8 @@ test("mobile notification remains topmost and enables push only through explicit
 });
 
 test("admin can sign in and open store operations", async ({ page }) => {
-  await page.goto("/login?callbackUrl=/admin");
-  await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
+  await page.goto("/admin/login");
+  await page.getByLabel("Email", { exact: true }).fill("admin@demo.bhx");
   await page.locator('input[type="password"]').fill("Demo@123");
   await page.getByRole("button", { name: /Đăng nhập/i }).click();
   await expect(page).toHaveURL(/\/admin$/);
@@ -1037,8 +1038,8 @@ test.describe("Admin core forms", () => {
       await gate;
       await route.fulfill(failWrite ? { status: 500, json: { error: { message: "Máy chủ từ chối cập nhật" } } } : { json: { id: "saved" } });
     });
-    await page.goto("/login?callbackUrl=/admin");
-    await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
+    await page.goto("/admin/login");
+    await page.getByLabel("Email", { exact: true }).fill("admin@demo.bhx");
     await page.locator('input[type="password"]').fill("Demo@123");
     await page.getByRole("button", { name: /Đăng nhập/i }).click();
     await expect(page).toHaveURL(/\/admin$/);
@@ -1105,8 +1106,8 @@ test.describe("Admin core forms", () => {
       await route.fulfill(failRefresh ? { status: 503, json: {} } : { json: overview });
     });
     await page.route("**/api/admin/products", async (route) => { writeCount++; failRefresh = true; await route.fulfill({ json: { id: "new-product" }, status: 201 }); });
-    await page.goto("/login?callbackUrl=/admin");
-    await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
+    await page.goto("/admin/login");
+    await page.getByLabel("Email", { exact: true }).fill("admin@demo.bhx");
     await page.locator('input[type="password"]').fill("Demo@123");
     await page.getByRole("button", { name: /Đăng nhập/i }).click();
     await expect(page).toHaveURL(/\/admin$/);
@@ -1130,8 +1131,8 @@ test.describe("Admin core forms", () => {
 });
 
 async function signInAdmin(page: Page) {
-  await page.goto("/login?callbackUrl=/admin");
-  await page.getByRole("button", { name: "Quản trị — cấu hình hệ thống", exact: true }).click();
+  await page.goto("/admin/login");
+  await page.getByLabel("Email", { exact: true }).fill("admin@demo.bhx");
   await page.locator('input[type="password"]').fill("Demo@123");
   await page.getByRole("button", { name: /Đăng nhập/i }).click();
   await expect(page).toHaveURL(/\/admin$/);
@@ -1678,8 +1679,9 @@ test("task push deep link survives signed-out login and remains Manager read-onl
   const writes: string[] = [];
   page.on("request", request => { if (request.method() === "POST" && /\/api\/staff\/tasks\/[^/]+\/(start|restock|fefo)$/.test(new URL(request.url()).pathname)) writes.push(request.url()); });
   await page.goto(`/admin?storeId=${data.selectedStoreId}&task=${target.id}`);
-  await expect(page).toHaveURL(url => url.pathname === "/login" && url.searchParams.get("callbackUrl") === `/admin?storeId=${data.selectedStoreId}&task=${target.id}`);
-  await page.getByRole("button", { name: "Quản lý — giám sát cửa hàng", exact: true }).click();
+  await expect(page).toHaveURL(url => url.pathname === "/admin/login" && url.searchParams.get("callbackUrl") === `/admin?storeId=${data.selectedStoreId}&task=${target.id}`);
+  await page.getByLabel("Email", { exact: true }).fill("manager@demo.bhx");
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
   await expect(page).toHaveURL(url => url.pathname === "/admin" && url.searchParams.get("task") === target.id);
   await expect(page.locator('tr[aria-current="true"] details[open]')).toContainText(target.title);
@@ -1721,3 +1723,69 @@ for (const admin of [false, true]) {
     expect(reads[1]).toEqual(admin ? ["second", "arrival"] : ["second"]);
   });
 }
+
+for (const [role, audience] of [["staff", "staff"], ["manager", "staff"], ["manager", "admin"], ["admin", "admin"]] as const) {
+  test(`role login ${role} enters ${audience} with blank credentials`, async ({ page }) => {
+    await page.goto(`/${audience}/login`);
+    await expect(page.getByLabel("Email", { exact: true })).toHaveValue("");
+    await expect(page.getByLabel("Mật khẩu", { exact: true })).toHaveValue("");
+    await expect(page.locator("body")).not.toContainText(/@demo\.bhx|Demo@123/);
+    await page.getByLabel("Email", { exact: true }).fill(`${role}@demo.bhx`);
+    await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
+    await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === `/${audience}`);
+    await expect(page.locator(".workspace-header h1")).toBeVisible();
+  });
+}
+for (const [role, audience, correct] of [["staff", "admin", "staff"], ["admin", "staff", "admin"]] as const) {
+  test(`wrong role ${role} at ${audience} signs back out before correct-page handoff`, async ({ page }) => {
+    await page.goto(`/${audience}/login`);
+    await page.getByLabel("Email", { exact: true }).fill(`${role}@demo.bhx`);
+    await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
+    await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+    const link = page.locator(".login-card").getByRole("alert").getByRole("link");
+    await expect(link).toHaveAttribute("href", `/${correct}/login`);
+    await expect(page).toHaveURL(url => url.pathname === `/${audience}/login`);
+    const session = await page.request.get("/api/auth/session");
+    expect((await session.json()).user).toBeUndefined();
+    await link.click();
+    await expect(page.getByLabel("Email", { exact: true })).toHaveValue("");
+  });
+}
+test("role login chooser keeps only matching deep-link callback and no credentials", async ({ page }) => {
+  await page.goto(`/login?callbackUrl=${encodeURIComponent("/admin?storeId=store-2&task=task-7")}`);
+  await expect(page.locator("a")).toHaveCount(2);
+  await expect(page.locator("input, form")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Tôi là nhân viên / quản lý", exact: true })).toHaveAttribute("href", "/staff/login");
+  await expect(page.getByRole("link", { name: "Tôi là quản trị", exact: true })).toHaveAttribute("href", "/admin/login?callbackUrl=%2Fadmin%3FstoreId%3Dstore-2%26task%3Dtask-7");
+});
+for (const audience of ["staff", "admin"] as const) {
+  test(`route guard signed-out ${audience} retains task context`, async ({ page }) => {
+    await page.goto(`/${audience}?storeId=store-2&task=task-7`);
+    await expect(page).toHaveURL(url => url.pathname === `/${audience}/login` && url.searchParams.get("callbackUrl") === `/${audience}?storeId=store-2&task=task-7`);
+  });
+}
+for (const [role, path, target] of [["staff", "/admin", "/staff"], ["admin", "/staff", "/admin"]] as const) {
+  test(`route guard authenticated ${role} is redirected from ${path}`, async ({ page }) => {
+    await authenticateStaffApp(page, `${role}@demo.bhx`);
+    await page.goto(path);
+    await expect(page).toHaveURL(url => url.pathname === target);
+  });
+}
+for (const callback of ["https://evil.example/staff", "//evil.example/staff", "/admin?storeId=other&task=task-2", "/staff?bad=%"]) {
+  test(`role login rejects crafted callback ${callback}`, async ({ page }) => {
+    await page.goto(`/staff/login?callbackUrl=${encodeURIComponent(callback)}`);
+    await page.getByLabel("Email", { exact: true }).fill("staff@demo.bhx");
+    await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
+    await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+    await expect(page).toHaveURL(url => url.origin === new URL(test.info().project.use.baseURL!).origin && url.pathname === "/staff" && url.search === "");
+  });
+}
+test("role login invalid credentials stay generic", async ({ page }) => {
+  await page.goto("/staff/login");
+  await page.getByLabel("Email", { exact: true }).fill("unknown@example.com");
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("incorrect-password");
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  await expect(page.locator(".login-card").getByRole("alert")).toHaveText("Email hoặc mật khẩu không đúng.");
+  await expect(page).toHaveURL(url => url.pathname === "/staff/login");
+});

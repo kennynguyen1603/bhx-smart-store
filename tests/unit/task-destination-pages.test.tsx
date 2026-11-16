@@ -17,5 +17,5 @@ it.each([["staff", StaffPage], ["admin", AdminPage]] as const)("%s forwards an a
 });
 it.each([["staff", StaffPage], ["admin", AdminPage]] as const)("%s preserves the task destination through login", async (path, page) => {
   auth.session = null;
-  await expect(page({ searchParams: Promise.resolve({ storeId: "other", task: "task-2" }) })).rejects.toMatchObject({ message: `/login?callbackUrl=${encodeURIComponent(`/${path}?storeId=other&task=task-2`)}` });
+  await expect(page({ searchParams: Promise.resolve({ storeId: "other", task: "task-2" }) })).rejects.toMatchObject({ message: `/${path}/login?callbackUrl=${encodeURIComponent(`/${path}?storeId=other&task=task-2`)}` });
 });

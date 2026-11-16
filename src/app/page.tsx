@@ -11,7 +11,7 @@ export default function HomePage() {
         <p>Nhân viên xử lý nhiệm vụ và theo dõi tình trạng kệ. Khách hàng tìm sản phẩm và đường đến kệ trên cùng dữ liệu cửa hàng.</p>
       </section>
       <section className="experience-grid" aria-label="Trải nghiệm chính">
-        <Link className="experience-card" href="/login?callbackUrl=/staff">
+        <Link className="experience-card" href="/staff/login">
           <span className="card-number">01</span><span className="card-icon green"><Smartphone /></span>
           <span className="card-copy"><small>Dành cho nhân viên và quản lý</small><strong>Ứng dụng nhân viên</strong><span>Nhiệm vụ ưu tiên, quét ESL, bổ sung hàng và FEFO — có thể làm việc offline.</span></span>
           <span className="card-link">Đăng nhập ứng dụng <ArrowRight /></span>
@@ -23,7 +23,7 @@ export default function HomePage() {
         </Link>
       </section>
       <nav className="demo-links" aria-label="Demo bổ trợ">
-        <Link href="/login?callbackUrl=/admin">Backoffice quản trị</Link>
+        <Link href="/admin/login">Backoffice quản trị</Link>
         <Link href="/demo/esl-labels">Nhãn ESL demo</Link>
         <Link href="/demo/barcodes">Mã vạch sản phẩm demo</Link>
       </nav>

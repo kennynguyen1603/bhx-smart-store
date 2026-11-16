@@ -308,3 +308,13 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .admin-task-table details p { margin: 8px 0; }
 
 .notification-read-one { flex-shrink: 0; margin-left: auto; }
+
+/* Audience-specific authentication entry points. */
+.auth-brand{font-size:22px;letter-spacing:-.03em}
+.login-role-choice{display:grid;gap:12px}
+.login-role-choice .button{min-height:48px;white-space:normal;text-align:center;line-height:1.5}
+.login-card .form-error{font-size:14px;line-height:1.5}
+.login-card .form-error a{display:block;margin-top:8px;font-weight:700;text-decoration:underline}
+.login-card .input-wrap{min-width:0}
+.login-card .input-wrap input{min-width:0}
+.login-card .input-wrap button{min-width:44px;min-height:44px}

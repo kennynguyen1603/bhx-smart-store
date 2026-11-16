@@ -1,19 +1,9 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
-import { LoginForm } from "@/components/login-form";
-import { Logo } from "@/components/logo";
+import { LoginRoleChoice, LoginShell } from "@/components/login-role-choice";
 
 export const metadata: Metadata = { title: "Đăng nhập" };
 
-export default function LoginPage() {
-  return (
-    <main className="auth-page">
-      <section className="auth-visual">
-        <Logo inverse />
-        <div><h1>Dữ liệu đúng.<br />Nhiệm vụ đúng.<br /><em>Đúng thời điểm.</em></h1><p>Nhân viên thực hiện nhiệm vụ, quản lý giám sát cửa hàng, quản trị cấu hình hệ thống.</p></div>
-        <small>BHX Smart In-store Operations</small>
-      </section>
-      <section className="auth-panel"><Suspense fallback={<p>Đang tải biểu mẫu đăng nhập…</p>}><LoginForm /></Suspense></section>
-    </main>
-  );
+export default async function LoginPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const query = await searchParams;
+  return <LoginShell><LoginRoleChoice callbackUrl={typeof query.callbackUrl === "string" ? query.callbackUrl : undefined} /></LoginShell>;
 }
