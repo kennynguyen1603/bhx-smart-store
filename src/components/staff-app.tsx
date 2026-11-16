@@ -1,8 +1,8 @@
 "use client";
 
-import { AlertTriangle, Bell, CalendarClock, CheckCircle2, ClipboardList, Clock3, History, LogOut, PackagePlus, RefreshCw, ScanLine, Store, Wifi, WifiOff, X } from "lucide-react";
+import { AlertTriangle, Bell, CalendarClock, CheckCircle2, ClipboardList, Clock3, History, LoaderCircle, LogOut, PackagePlus, RefreshCw, ScanLine, Store, Wifi, WifiOff, X } from "lucide-react";
 import { signOut } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "next-auth";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { EslScannerModal, type TaskSummary } from "@/components/esl-scanner-modal";
@@ -17,6 +17,23 @@ type Payload = { stores: StoreOption[]; selectedStoreId: string; tasks: Task[]; 
 function uuid() { return crypto.randomUUID(); }
 function time(value: string) { return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
 
+const PUSH_READY_TIMEOUT_MS = 5_000;
+
+class PushSetupError extends Error {}
+
+function waitForServiceWorker(ready: Promise<ServiceWorkerRegistration>) {
+  return new Promise<ServiceWorkerRegistration>((resolve, reject) => {
+    const timeout = window.setTimeout(
+      () => reject(new PushSetupError("Service Worker chưa sẵn sàng. Hãy thử lại.")),
+      PUSH_READY_TIMEOUT_MS,
+    );
+    ready.then(
+      (registration) => { window.clearTimeout(timeout); resolve(registration); },
+      () => { window.clearTimeout(timeout); reject(new PushSetupError("Không thể kết nối Service Worker. Hãy thử lại.")); },
+    );
+  });
+}
+
 export function StaffApp({ user }: { user: Session["user"] }) {
   const [data, setData] = useState<Payload | null>(null);
   const [storeId, setStoreId] = useState(user.defaultStoreId || "");
@@ -30,6 +47,8 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const [queueCount, setQueueCount] = useState(0);
   const [toast, setToast] = useState<{ message: string; error?: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pushPending, setPushPending] = useState(false);
+  const pushPendingRef = useRef(false);
   const managerOversight = user.role === "MANAGER";
 
   const notify = useCallback((message: string, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast(null), 4200); }, []);
@@ -94,17 +113,37 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   }
 
   async function enablePush() {
+    if (pushPendingRef.current) return;
+    pushPendingRef.current = true;
+    setPushPending(true);
     try {
+      if (typeof Notification === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+        throw new PushSetupError("Trình duyệt này không hỗ trợ Web Push.");
+      }
       const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!key) { notify("Chưa cấu hình VAPID key trên môi trường này.", true); return; }
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") { notify("Bạn chưa cho phép nhận thông báo.", true); return; }
-      const registration = await navigator.serviceWorker.ready;
+      if (!key) throw new PushSetupError("Chưa cấu hình VAPID key trên môi trường này.");
+      let permission = Notification.permission;
+      if (permission === "denied") throw new PushSetupError("Bạn đã từ chối quyền nhận thông báo.");
+      if (permission !== "granted") permission = await Notification.requestPermission();
+      if (permission !== "granted") throw new PushSetupError("Bạn chưa cho phép nhận thông báo.");
+      const registration = await waitForServiceWorker(navigator.serviceWorker.ready);
+      if (!registration.pushManager?.subscribe) throw new PushSetupError("Trình duyệt này không hỗ trợ Web Push.");
       const bytes = Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
-      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
-      await fetch("/api/push/subscriptions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(subscription.toJSON()) });
+      let subscription: PushSubscription;
+      try {
+        subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
+      } catch {
+        throw new PushSetupError("Không thể tạo đăng ký Web Push trên trình duyệt này.");
+      }
+      const response = await fetch("/api/push/subscriptions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(subscription.toJSON()) });
+      if (!response.ok) throw new PushSetupError("Không thể lưu đăng ký Web Push. Hãy thử lại.");
       notify("Đã bật Web Push cho thiết bị này.");
-    } catch { notify("Không thể bật Web Push trên trình duyệt này.", true); }
+    } catch (error) {
+      notify(error instanceof PushSetupError ? error.message : "Không thể bật Web Push trên trình duyệt này.", true);
+    } finally {
+      pushPendingRef.current = false;
+      setPushPending(false);
+    }
   }
 
   async function openTask(task: Task) { setSelected(task); setScanned(false); setScanCode(task.shelf.esls[0]?.code || ""); setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1)); if(["OPEN","BLOCKED"].includes(task.status)) await mutation(`/api/staff/tasks/${task.id}/start`,{clientMutationId:uuid()},"Đã bắt đầu nhiệm vụ."); }
@@ -121,7 +160,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     <main className="app-shell">
       <aside className="sidebar"><Logo inverse /><div className="store-selector"><label>ĐANG LÀM VIỆC TẠI</label><select value={storeId} onChange={(e) => setStoreId(e.target.value)}>{data?.stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></div><nav className="side-nav">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon /><span className="nav-label">{label}</span>{id === "tasks" && <span className="count" aria-label={`${activeTasks.length} nhiệm vụ đang mở`}>{activeTasks.length}</span>}</button>)}<button className={tab === "scanner" ? "active" : ""} onClick={() => setTab("scanner")}><ScanLine /><span className="nav-label">Quét ESL</span></button></nav><div className="user-card"><span className="user-avatar">{user.name?.split(" ").slice(-2).map((v) => v[0]).join("")}</span><span><strong>{user.name}</strong><small>{user.role}</small></span><button onClick={() => signOut({ callbackUrl: "/" })} aria-label="Đăng xuất"><LogOut /></button></div></aside>
       <section className="workspace">
-        <header className="workspace-header"><div><span className="section-label">{new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(new Date()).toUpperCase()}</span><h1>Chào buổi sáng, {user.name?.split(" ").at(-1)} 👋</h1><p>{data?.stores.find((store) => store.id === storeId)?.address}</p></div><div className="header-actions"><span className={`connection-pill ${online ? "" : "offline"}`}>{online ? <Wifi /> : <WifiOff />}{online ? "Đã đồng bộ" : `Offline · ${queueCount} chờ`}</span><button className="icon-button notification-button" onClick={enablePush} aria-label="Bật thông báo"><Bell />{!!data?.notifications.length&&<span>{data.notifications.length}</span>}</button><button className="icon-button" onClick={() => load()} aria-label="Tải lại"><RefreshCw className={loading ? "spin" : ""} /></button><button className="icon-button mobile-logout" onClick={() => signOut({ callbackUrl: "/" })} aria-label="Đăng xuất"><LogOut /></button></div></header>
+        <header className="workspace-header"><div><span className="section-label">{new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(new Date()).toUpperCase()}</span><h1>Chào buổi sáng, {user.name?.split(" ").at(-1)} 👋</h1><p>{data?.stores.find((store) => store.id === storeId)?.address}</p></div><div className="header-actions"><span className={`connection-pill ${online ? "" : "offline"}`}>{online ? <Wifi /> : <WifiOff />}{online ? "Đã đồng bộ" : `Offline · ${queueCount} chờ`}</span><button className="icon-button notification-button" onClick={() => void enablePush()} disabled={pushPending} aria-label={pushPending ? "Đang bật thông báo" : "Bật thông báo"}>{pushPending ? <LoaderCircle className="spin" aria-hidden="true" /> : <Bell />}{!!data?.notifications.length&&<span>{data.notifications.length}</span>}</button><button className="icon-button" onClick={() => load()} aria-label="Tải lại"><RefreshCw className={loading ? "spin" : ""} /></button><button className="icon-button mobile-logout" onClick={() => signOut({ callbackUrl: "/" })} aria-label="Đăng xuất"><LogOut /></button></div></header>
         {data && <div className="metric-grid"><Metric icon={ClipboardList} label="Nhiệm vụ mở" value={data.metrics.openTasks} helper={`${data.metrics.highPriority} khẩn cấp`} /><Metric icon={AlertTriangle} label="Kệ sắp hết" value={data.metrics.lowShelves} helper="Theo dữ liệu POS" alert /><Metric icon={CalendarClock} label="FEFO hôm nay" value={data.metrics.fefoTasks} helper="Nhãn/cách ly" /><Metric icon={CheckCircle2} label="Hoàn thành" value={`${data.metrics.completionRate}%`} helper="Trong ca hiện tại" /></div>}
         {tab === "overview" && <div className="dashboard-grid"><section className="panel"><PanelTitle label="CẦN XỬ LÝ" title="Nhiệm vụ ưu tiên" /><div className="task-list">{activeTasks.slice(0, 5).map((task) => <TaskRow key={task.id} task={task} managerOversight={managerOversight} onClick={() => openTask(task)} />)}{!activeTasks.length && <div className="empty-state">Bạn đã xử lý hết nhiệm vụ đang mở.</div>}</div></section><section className="panel"><PanelTitle label="LIVE DATA" title="Tình trạng kệ" /><div className="stock-list">{data?.inventories.slice(0, 6).map((item) => <div className="stock-row" key={item.id}><div className="stock-head"><strong>{item.product.name}</strong><span>{item.onShelf}/{item.capacity}</span></div><div className="stock-bar"><i className={item.onShelf <= item.lowThreshold ? "low" : ""} style={{ width: `${Math.min(100, item.onShelf / item.capacity * 100)}%` }} /></div></div>)}</div></section></div>}
         {tab === "tasks" && <section className="panel"><PanelTitle label="CÔNG VIỆC TRONG CA" title="Tất cả nhiệm vụ" /><div className="filter-row">{[["ACTIVE","Đang mở"],["RESTOCK","Bổ sung"],["FEFO","FEFO"],["QUARANTINE","Cách ly"],["COMPLETED","Hoàn thành"]].map(([id,label]) => <button key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}</div><div className="task-list">{visibleTasks.map((task) => <TaskRow key={task.id} task={task} managerOversight={managerOversight} onClick={() => openTask(task)} />)}{!visibleTasks.length && <div className="empty-state">Không có nhiệm vụ phù hợp bộ lọc.</div>}</div></section>}

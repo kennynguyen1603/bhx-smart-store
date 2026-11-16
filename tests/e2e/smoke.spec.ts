@@ -555,57 +555,126 @@ test("ESL lookup uses the newest response and opens a task missing from stale po
   }
 });
 
-test("mobile staff navbar keeps labels aligned when the task badge is visible", async ({ page }) => {
-  test.setTimeout(60_000);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/login?callbackUrl=/staff");
-  await page.getByLabel("Email").fill("staff@demo.bhx");
-  await page.locator('input[type="password"]').fill("Demo@123");
-  await page.getByRole("button", { name: /Đăng nhập/i }).click();
-  await expect(page).toHaveURL(/\/staff$/);
-  await expect(page.locator(".side-nav .nav-label")).toHaveCount(4);
-  await expect(page.locator(".side-nav .count")).toBeVisible();
+for (const [role, account] of [["Staff", "staff@demo.bhx"], ["Manager", "manager@demo.bhx"]] as const) {
+  test(`mobile staff navbar keeps four-state ESL navigation deterministic for ${role}`, async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await authenticateStaffApp(page, account);
+    await expect(page.locator(".side-nav .nav-label")).toHaveCount(4);
+    await expect(page.locator(".side-nav .count")).toBeVisible();
 
-  const layout = await page.evaluate(() => {
-    const labels = Array.from(document.querySelectorAll<HTMLElement>(".side-nav .nav-label"));
-    const taskLabel = labels.find((label) => label.textContent?.trim() === "Nhiệm vụ")!.getBoundingClientRect();
-    const badge = document.querySelector<HTMLElement>(".side-nav .count")!.getBoundingClientRect();
-    const labelTops = labels.map((label) => label.getBoundingClientRect().top);
-    return {
-      labelOffset: Math.max(...labelTops) - Math.min(...labelTops),
-      badgeOverlapsLabel: badge.left < taskLabel.right && badge.right > taskLabel.left && badge.top < taskLabel.bottom && badge.bottom > taskLabel.top,
-    };
+    const layout = await page.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll<HTMLElement>(".side-nav .nav-label"));
+      const taskLabel = labels.find((label) => label.textContent?.trim() === "Nhiệm vụ")!.getBoundingClientRect();
+      const badge = document.querySelector<HTMLElement>(".side-nav .count")!.getBoundingClientRect();
+      const labelTops = labels.map((label) => label.getBoundingClientRect().top);
+      return {
+        labelOffset: Math.max(...labelTops) - Math.min(...labelTops),
+        badgeOverlapsLabel: badge.left < taskLabel.right && badge.right > taskLabel.left && badge.top < taskLabel.bottom && badge.bottom > taskLabel.top,
+      };
+    });
+    expect(layout.labelOffset).toBeLessThanOrEqual(1);
+    expect(layout.badgeOverlapsLabel).toBe(false);
+
+    const overviewTab = page.getByRole("button", { name: "Tổng quan" });
+    const tasksTab = page.getByRole("button", { name: "Nhiệm vụ" });
+    const scannerTab = page.getByRole("button", { name: "Quét ESL" });
+    await tasksTab.click();
+    await expect(tasksTab).toHaveClass(/active/);
+    await expect(page.getByRole("heading", { name: "Tất cả nhiệm vụ" })).toBeVisible();
+
+    await scannerTab.click();
+    await expect(scannerTab).toHaveClass(/active/);
+    await expect(tasksTab).not.toHaveClass(/active/);
+    await expect(page.getByRole("heading", { name: "Tất cả nhiệm vụ" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Đóng tra cứu ESL" }).click();
+    await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toHaveCount(0);
+    await expect(overviewTab).toHaveClass(/active/);
+    await expect(tasksTab).not.toHaveClass(/active/);
+
+    const logout = page.getByRole("button", { name: "Đăng xuất" });
+    await expect(logout).toBeVisible();
+    await expect(logout).toBeEnabled();
+    await logout.click();
+    await expect(page).toHaveURL((url) => url.pathname === "/");
   });
-  expect(layout.labelOffset).toBeLessThanOrEqual(1);
-  expect(layout.badgeOverlapsLabel).toBe(false);
+}
 
-  const tasksTab = page.getByRole("button", { name: "Nhiệm vụ" });
-  const scannerTab = page.getByRole("button", { name: "Quét ESL" });
-  await tasksTab.click();
-  await expect(tasksTab).toHaveClass(/active/);
-  await scannerTab.click();
-  await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toBeVisible();
-  await expect(scannerTab).toHaveClass(/active/);
-  await expect(tasksTab).not.toHaveClass(/active/);
-  await expect(page.getByRole("heading", { name: "Tất cả nhiệm vụ" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Đăng xuất" })).toBeVisible();
+test("mobile notification remains topmost and clickable at supported widths", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: { permission: "granted", requestPermission: async () => "granted" },
+    });
+    Object.defineProperty(window, "PushManager", { configurable: true, value: function PushManager() {} });
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        getRegistrations: async () => [],
+        ready: Promise.resolve({
+          pushManager: {
+            subscribe: async () => ({
+              toJSON: () => ({ endpoint: "https://push.example/mobile", keys: { auth: "auth", p256dh: "key" } }),
+            }),
+          },
+        }),
+      },
+    });
+  });
 
-  await page.getByRole("button", { name: "Đóng tra cứu ESL" }).click();
-  await page.getByRole("button", { name: "Đăng xuất" }).click();
-  await expect(page).toHaveURL(/\/$/);
-  await page.goto("/login?callbackUrl=/staff");
-  await page.getByRole("button", { name: "Manager", exact: true }).click();
-  await page.locator('input[type="password"]').fill("Demo@123");
-  await page.getByRole("button", { name: /Đăng nhập/i }).click();
-  await expect(page).toHaveURL(/\/staff$/);
-  const managerTasksTab = page.getByRole("button", { name: "Nhiệm vụ" });
-  const managerScannerTab = page.getByRole("button", { name: "Quét ESL" });
-  await managerTasksTab.click();
-  await managerScannerTab.click();
-  await expect(page.getByRole("heading", { name: "Tra cứu ESL" })).toBeVisible();
-  await expect(managerScannerTab).toHaveClass(/active/);
-  await expect(managerTasksTab).not.toHaveClass(/active/);
-  await expect(page.getByRole("button", { name: "Đăng xuất" })).toBeVisible();
+  let pushPosts = 0;
+  let releaseFirstPost!: () => void;
+  const firstPostGate = new Promise<void>((resolve) => { releaseFirstPost = resolve; });
+  await page.route("**/api/push/subscriptions", async (route) => {
+    pushPosts += 1;
+    if (pushPosts === 1) await firstPostGate;
+    await route.fulfill({ status: 201, json: { ok: true } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await authenticateStaffApp(page, "staff@demo.bhx");
+
+  for (const [index, width] of [320, 390, 760].entries()) {
+    await page.setViewportSize({ width, height: 844 });
+    const notification = page.locator(".notification-button");
+    await expect(notification).toBeVisible();
+    await expect(notification).toBeEnabled();
+    const layout = await notification.evaluate((button) => {
+      const rect = button.getBoundingClientRect();
+      const siblings = Array.from(button.parentElement!.children).filter((element) => element !== button);
+      const overlaps = siblings.some((element) => {
+        const sibling = element.getBoundingClientRect();
+        return rect.left < sibling.right && rect.right > sibling.left && rect.top < sibling.bottom && rect.bottom > sibling.top;
+      });
+      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const topmost = document.elementFromPoint(center.x, center.y);
+      return {
+        width: rect.width,
+        height: rect.height,
+        flexShrink: getComputedStyle(button).flexShrink,
+        overlaps,
+        topmost: topmost === button || button.contains(topmost),
+        center,
+      };
+    });
+    expect(layout.width).toBeGreaterThanOrEqual(44);
+    expect(layout.height).toBeGreaterThanOrEqual(44);
+    expect(layout.flexShrink).toBe("0");
+    expect(layout.overlaps).toBe(false);
+    expect(layout.topmost).toBe(true);
+
+    await page.mouse.click(layout.center.x, layout.center.y);
+    await expect.poll(() => pushPosts).toBe(index + 1);
+    if (index === 0) {
+      await expect(page.getByRole("button", { name: "Đang bật thông báo" })).toBeDisabled();
+      await expect(notification.locator(".spin")).toBeVisible();
+      releaseFirstPost();
+    }
+    await expect(page.getByText("Đã bật Web Push cho thiết bị này.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Bật thông báo" })).toBeEnabled();
+  }
 });
 
 test("admin can sign in and open store operations", async ({ page }) => {
