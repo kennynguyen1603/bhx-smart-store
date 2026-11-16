@@ -139,7 +139,8 @@ it("closes after a confirmed write despite refresh failure and retries only the 
   expect(document.body.textContent).toContain("Đã lưu thay đổi nhưng không thể tải lại dữ liệu");
   failRefresh = false;
   await act(async () => button("Tải lại dữ liệu").click());
-  expect(readCount).toBe(3); expect(writes).toHaveLength(1);
+  // Initial GET, authoritative baseline, post-write refresh, and manual retry.
+  expect(readCount).toBe(4); expect(writes).toHaveLength(1);
 });
 it("closes immediately after write success even while the overview refresh is unresolved", async () => {
   await open("product");

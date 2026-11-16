@@ -1384,3 +1384,78 @@ for (const role of ["staff", "admin"] as const) {
     console.log(`${role}: hidden requests=0 over 8500ms; visible return immediate`);
   });
 }
+
+for (const role of ["staff", "admin"] as const) {
+  for (const initiallyHidden of [false, true]) {
+    test(`realtime reconciliation retries a stable token after failed baseline for ${role} hidden=${initiallyHidden}`, async ({ page }) => {
+      await page.addInitScript(hidden => {
+        let visible = !hidden;
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible ? "visible" : "hidden" });
+        (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility = value => { visible = value; document.dispatchEvent(new Event("visibilitychange")); };
+      }, initiallyHidden);
+      const marker = `reconciled-${role}`;
+      let reads = 0, tokenReads = 0;
+      await page.route("**/api/store-changes**", route => { tokenReads++; return route.fulfill({ json: { token: "stable-after-write", taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: 0 } }); });
+      const { overview } = await import("../fixtures/admin-core");
+      await page.route(role === "staff" ? "**/api/staff/tasks?**" : "**/api/admin/overview**", route => {
+        reads++;
+        if (reads === 2) return route.fulfill({ status: 503, json: {} });
+        if (role === "staff") {
+          const payload = taskInteractionPayload(); payload.tasks[0].title = reads === 1 ? "Initial old snapshot" : marker;
+          return route.fulfill({ json: payload });
+        }
+        const payload = structuredClone(overview); payload.inventories[0].product.name = reads === 1 ? "Initial old snapshot" : marker;
+        return route.fulfill({ json: payload });
+      });
+      await authenticateStaffApp(page, `${role}@demo.bhx`); if (role === "admin") await page.goto("/admin");
+      await expect(page.locator(".workspace")).toContainText("Initial old snapshot");
+      if (initiallyHidden) {
+        expect(tokenReads).toBe(0);
+        await page.evaluate(() => (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility(true));
+      }
+      await expect(page.locator(".workspace")).toContainText(marker, { timeout: 6000 });
+      expect(reads).toBeGreaterThanOrEqual(3);
+      console.log(`${role} hidden=${initiallyHidden}: failed baseline retried stable token, full reads=${reads}`);
+    });
+  }
+}
+
+test("offline queue retries on visible return after startup 503 without duplicate writes", async ({ page }) => {
+  await page.addInitScript(() => {
+    let visible = true;
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visible ? "visible" : "hidden" });
+    (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility = value => { visible = value; document.dispatchEvent(new Event("visibilitychange")); };
+  });
+  let writes = 0, release!: () => void;
+  const gate = new Promise<void>(done => { release = done; });
+  await page.route("**/api/review-offline-queue", async route => {
+    writes++;
+    if (writes === 1) return route.fulfill({ status: 503, json: {} });
+    await gate; return route.fulfill({ json: { ok: true } });
+  });
+  await authenticateStaffApp(page, "staff@demo.bhx"); await expect(page.locator(".workspace-header h1")).toBeVisible();
+  await expect.poll(() => page.evaluate(async () => (await indexedDB.databases()).some(db => db.name === "bhx-smart-store"))).toBe(true);
+  await page.goto("/login");
+  await page.evaluate(() => new Promise<void>((resolve, reject) => {
+    const open = indexedDB.open("bhx-smart-store"); open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result, tx = db.transaction("mutations", "readwrite");
+      tx.objectStore("mutations").put({ id: "review-queue", url: "/api/review-offline-queue", method: "POST", body: { clientMutationId: "review-queue" }, createdAt: Date.now() });
+      tx.oncomplete = () => { db.close(); resolve(); }; tx.onerror = () => reject(tx.error);
+    };
+  }));
+  await page.goto("/staff"); await expect.poll(() => writes).toBe(1);
+  await page.evaluate(() => { (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility(false); window.dispatchEvent(new Event("focus")); });
+  await page.waitForTimeout(200); expect(writes).toBe(1);
+  await page.evaluate(() => {
+    (window as unknown as { setTestVisibility: (value: boolean) => void }).setTestVisibility(true);
+    window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online")); window.dispatchEvent(new Event("focus"));
+  });
+  await expect.poll(() => writes).toBe(2);
+  await page.evaluate(() => { window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange")); });
+  await page.waitForTimeout(100); expect(writes).toBe(2); release();
+  await expect.poll(() => page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const open = indexedDB.open("bhx-smart-store"); open.onerror = () => reject(open.error);
+    open.onsuccess = () => { const db = open.result, count = db.transaction("mutations").objectStore("mutations").count(); count.onsuccess = () => { db.close(); resolve(count.result); }; };
+  }))).toBe(0);
+});

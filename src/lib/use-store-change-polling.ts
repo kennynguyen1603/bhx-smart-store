@@ -30,10 +30,12 @@ export function useStoreChangePolling({ storeId, onChange, intervalMs = 4_000 }:
         const response = await fetch(`/api/store-changes?storeId=${encodeURIComponent(storeId)}`, { cache: "no-store", signal: controller.signal });
         if (!response.ok) return;
         const snapshot = await response.json() as StoreChangeSnapshot;
-        if (disposed || typeof snapshot.token !== "string") return;
-        const changed = previousToken !== undefined && snapshot.token !== previousToken;
-        previousToken = snapshot.token;
-        if (changed) await onChangeRef.current(snapshot);
+        if (disposed || document.visibilityState !== "visible" || typeof snapshot.token !== "string") return;
+        if (snapshot.token !== previousToken) {
+          // Reconcile the baseline too: the initial data GET can predate this token.
+          await onChangeRef.current(snapshot);
+          if (!disposed) previousToken = snapshot.token;
+        }
       } catch {
         // Offline and transient failures retry on the next visible check.
       } finally {

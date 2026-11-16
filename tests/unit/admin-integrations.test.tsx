@@ -175,7 +175,8 @@ it("keeps write success separate from a failed refresh and never replays the wri
   refreshRequest = async () => Response.json(overview);
   await act(async () => button("Tải lại dữ liệu").click());
   await settle();
-  expect(readCount).toBe(3);
+  // Initial GET, authoritative baseline, post-write refresh, and manual retry.
+  expect(readCount).toBe(4);
   expect(writes).toHaveLength(1);
 });
 

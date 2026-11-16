@@ -82,13 +82,13 @@ export function AdminApp({ user }: { user: Session["user"] }) {
   const activeLoadRef = useRef<{ controller: AbortController; promise: Promise<boolean>; followup?: Promise<boolean> } | null>(null);
   const canAdmin = user.role === "ADMIN";
   const notify = useCallback((message: string, error = false) => { if (error) toast.error(message); else toast.success(message); }, []);
-  const load = useCallback(async function loadStore(afterWrite = false, refreshAfterPending = false): Promise<boolean> {
-    if (storeId !== loadStoreIdRef.current) return false;
+  const load = useCallback(async function loadStore(afterWrite = false, refreshAfterPending = false, requireVisible = false): Promise<boolean> {
+    if (storeId !== loadStoreIdRef.current || (requireVisible && document.visibilityState !== "visible")) return false;
     const generation = loadGenerationRef.current;
     const active = activeLoadRef.current;
     if (active) {
       if (!afterWrite && !refreshAfterPending) return active.promise;
-      active.followup ??= active.promise.then(() => generation === loadGenerationRef.current ? loadStore(afterWrite) : false);
+      active.followup ??= active.promise.then(() => generation === loadGenerationRef.current ? loadStore(afterWrite, false, requireVisible) : false);
       return active.followup;
     }
     if (mountedRef.current) setLoading(true);
@@ -129,7 +129,9 @@ export function AdminApp({ user }: { user: Session["user"] }) {
       activeLoadRef.current = null;
     };
   }, [load, storeId]);
-  useStoreChangePolling({ storeId, onChange: async () => { await load(false, true); } });
+  useStoreChangePolling({ storeId, onChange: async () => {
+    if (!await load(false, true, true)) throw new Error("Store refresh was not acknowledged");
+  } });
   useEffect(() => {
     mountedRef.current = true;
     const controllers = requestControllers.current;

@@ -50,7 +50,8 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const confirmedReadsRef = useRef(new Map<string, Map<string, string>>());
   const loadGenerationRef = useRef(0);
   const loadStoreIdRef = useRef<string | null>(storeId);
-  const activeLoadRef = useRef<{ controller: AbortController; promise: Promise<void>; followup?: Promise<void> } | null>(null);
+  const activeLoadRef = useRef<{ controller: AbortController; promise: Promise<boolean>; followup?: Promise<boolean> } | null>(null);
+  const queueSyncRef = useRef<Promise<void> | null>(null);
   const managerOversight = user.role === "MANAGER";
 
   const mergeConfirmedReads = useCallback((payload: Payload): Payload => {
@@ -62,15 +63,15 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   }, []);
 
   const notify = useCallback((message: string, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast(null), 4200); }, []);
-  const load = useCallback(async function loadStore(refreshAfterPending = false): Promise<void> {
-    if (!storeId || storeId !== loadStoreIdRef.current) return;
+  const load = useCallback(async function loadStore(refreshAfterPending = false, requireVisible = false): Promise<boolean> {
+    if (!storeId || storeId !== loadStoreIdRef.current || (requireVisible && document.visibilityState !== "visible")) return false;
     const generation = loadGenerationRef.current;
     const active = activeLoadRef.current;
     if (active) {
       if (!refreshAfterPending) return active.promise;
       // A change detected during an older GET must not be consumed by that snapshot.
       active.followup ??= active.promise.then(() => {
-        if (generation === loadGenerationRef.current) return loadStore();
+        return generation === loadGenerationRef.current ? loadStore(false, requireVisible) : false;
       });
       return active.followup;
     }
@@ -83,21 +84,24 @@ export function StaffApp({ user }: { user: Session["user"] }) {
         const response = await fetch(`/api/staff/tasks?storeId=${encodeURIComponent(storeId)}`, { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error();
         const payload = mergeConfirmedReads(await response.json() as Payload);
-        if (!isCurrentReadVersion()) return;
+        if (!isCurrentReadVersion()) return false;
         const pendingRead = readPendingRef.current;
         const pendingIds = new Set(pendingRead?.previous.filter((item) => !item.readAt).map((item) => item.id));
         setData(pendingRead?.storeId === storeId ? {
           ...payload,
           notifications: payload.notifications.map((item) => !item.readAt && pendingIds.has(item.id) ? { ...item, readAt: pendingRead.readAt } : item),
         } : payload);
-        await cacheStaffPayload(storeId, payload);
-        if (isCurrent()) setOnline(true);
+        await cacheStaffPayload(storeId, payload).catch(() => undefined);
+        if (!isCurrentReadVersion()) return false;
+        setOnline(true);
+        return true;
       } catch {
-        if (!isCurrent()) return;
+        if (!isCurrent()) return false;
         const cached = await getCachedStaffPayload<Payload>(storeId);
-        if (!isCurrentReadVersion()) return;
+        if (!isCurrentReadVersion()) return false;
         if (cached) { setData(mergeConfirmedReads(cached)); setOnline(false); }
         else notify("Không thể tải nhiệm vụ. Kiểm tra kết nối mạng.", true);
+        return false;
       } finally {
         if (isCurrent()) setLoading(false);
         if (activeLoadRef.current?.controller === controller) activeLoadRef.current = null;
@@ -118,13 +122,53 @@ export function StaffApp({ user }: { user: Session["user"] }) {
       activeLoadRef.current = null;
     };
   }, [load, storeId]);
-  useStoreChangePolling({ storeId, onChange: () => load(true) });
+  useStoreChangePolling({ storeId, onChange: async () => {
+    if (!await load(true, true)) throw new Error("Store refresh was not acknowledged");
+  } });
   useEffect(() => {
-    const sync = async () => { setOnline(navigator.onLine); if (navigator.onLine) { const result = await flushOfflineMutations(); setQueueCount(result.remaining); if (result.conflicts.length) notify("Một cập nhật offline bị xung đột. Hãy kiểm đếm lại.", true); await load(); } };
-    window.addEventListener("online", sync); window.addEventListener("offline", sync);
-    offlineQueueCount().then(setQueueCount);
-    const initialNetworkState = window.setTimeout(() => setOnline(navigator.onLine), 0);
-    return () => { clearTimeout(initialNetworkState); window.removeEventListener("online", sync); window.removeEventListener("offline", sync); };
+    let disposed = false;
+    let retryPending = false;
+    const sync = (event?: Event) => {
+      if (disposed) return;
+      setOnline(navigator.onLine);
+      if (!navigator.onLine || document.visibilityState !== "visible") return;
+      if (queueSyncRef.current) {
+        if (!retryPending) {
+          retryPending = true;
+          void queueSyncRef.current.then(() => { retryPending = false; if (!disposed) sync(); });
+        }
+        return;
+      }
+      const operation = (async () => {
+        const queued = await offlineQueueCount();
+        if (disposed || document.visibilityState !== "visible") return;
+        setQueueCount(queued);
+        if (queued > 0) {
+          const result = await flushOfflineMutations();
+          if (disposed) return;
+          setQueueCount(result.remaining);
+          if (result.conflicts.length) notify("Một cập nhật offline bị xung đột. Hãy kiểm đếm lại.", true);
+        }
+        if ((queued > 0 || event?.type === "online") && document.visibilityState === "visible") await load(true, true);
+      })().catch(() => undefined).finally(() => {
+        if (queueSyncRef.current === operation) queueSyncRef.current = null;
+      });
+      queueSyncRef.current = operation;
+    };
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    window.addEventListener("focus", sync);
+    document.addEventListener("visibilitychange", sync);
+    offlineQueueCount().then(count => { if (!disposed) setQueueCount(count); }).catch(() => undefined);
+    const initialNetworkState = window.setTimeout(sync, 0);
+    return () => {
+      disposed = true;
+      clearTimeout(initialNetworkState);
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+      window.removeEventListener("focus", sync);
+      document.removeEventListener("visibilitychange", sync);
+    };
   }, [load, notify]);
 
   const activeTasks = useMemo(() => data?.tasks.filter((task) => !["COMPLETED", "CANCELLED"].includes(task.status)) || [], [data]);
