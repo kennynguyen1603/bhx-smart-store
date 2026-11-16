@@ -88,11 +88,32 @@ GitHub Actions chạy PostgreSQL service, migration, seed, lint, typecheck, unit
 
 ## Luồng demo xác nhận phản hồi
 
+### Chuẩn bị dữ liệu và mã để in
+
+Chạy `npm run db:seed` **trước mỗi buổi demo/test, hoặc ít nhất 2 ngày một lần**. Hạn dùng được tính tương đối theo ngày của cửa hàng (mặc định `Asia/Ho_Chi_Minh`); các lô FEFO demo có HSD +3 ngày khi seed và dùng được khoảng 2 ngày. Seed đặt lại nhiệm vụ demo và các trạng thái lô mẫu, nên hãy chạy trước khi bắt đầu luồng hoàn thành nhiệm vụ.
+
+- Mở [/demo/barcodes](http://localhost:3000/demo/barcodes), chọn **BHX Nguyễn Trãi (NT-Q5)**, bấm **Xem mã vạch** rồi **In A4** ở tỷ lệ 100% để in mã EAN-13 sản phẩm.
+- Mở [/demo/esl-labels](http://localhost:3000/demo/esl-labels), chọn cùng cửa hàng, bấm **Xem nhãn** rồi **In A4** để in QR ESL. Cả hai trang đều có liên kết từ trang chủ.
+- Tại `/kiosk`, chọn **BHX Nguyễn Trãi**. Quét mã EAN `8934673574211` hoặc mã ESL `ESL-NT-Q5-L-02` đều mở **Sữa tươi Vinamilk 100% 1L** và bản đồ tới **L-02 · Kệ sữa tươi**. Có thể dùng camera hoặc máy quét HID gửi Enter sau mã. Mã ESL thuộc cửa hàng khác hoặc không tồn tại sẽ hiện thông báo không nhận diện được mã.
+
 ### Giá FEFO trên kiosk
 
-1. Mở `/kiosk`, chọn cửa hàng và tìm sản phẩm có lô sắp hết hạn đang được giảm giá.
-2. Kiểm tra thẻ kết quả hiển thị cùng giá hiện tại, giá gốc gạch ngang và phần trăm giảm như màn hình chi tiết.
-3. Giá công khai lấy từ lô còn bán được có hạn dùng gần nhất; lô cách ly, hết hàng hoặc không còn hiệu lực không chi phối giá. Nếu không có lô giảm giá hợp lệ, kiosk dùng giá cơ sở của sản phẩm.
+1. Ngay sau seed, mở `/kiosk`, chọn **BHX Nguyễn Trãi (NT-Q5)** và tìm theo tên hoặc SKU trong bảng. GREENS/BREAD đã có lô `MARKED_DOWN`, giảm 20%, HSD +3 ngày; không cần hoàn thành task để thấy giá giảm.
+
+   | SKU · Sản phẩm | Giá hiện tại | Giá gốc gạch ngang | Nhãn giảm |
+   |---|---:|---:|---|
+   | `GREENS-500` · Cải xanh VietGAP gói 500g | 14.320 ₫ | 17.900 ₫ | Giảm 20% |
+   | `BREAD-300` · Bánh mì sandwich lúa mạch 300g | 22.800 ₫ | 28.500 ₫ | Giảm 20% |
+
+2. Kiểm tra cùng giá hiện tại, giá gốc gạch ngang và nhãn giảm trên thẻ kết quả lẫn chi tiết. **MILK-1L · Sữa tươi Vinamilk 100% 1L** vẫn có giá thường **32.600 ₫**, không có giá gạch ngang/nhãn giảm.
+3. Giá công khai lấy từ **lô hợp lệ có hạn dùng gần nhất**. Lô đó chưa giảm thì hiển thị giá thường dù lô muộn hơn có giảm giá. Bỏ qua lô cách ly, `SOLD_OUT`, số lượng ≤0, và lô đã tới hoặc quá ngày HSD theo múi giờ cửa hàng; không còn lô hợp lệ thì dùng giá cơ sở. APPLE có lô sớm hơn `SOLD_OUT`/số lượng 0; CHEESE có lô quá hạn chưa cách ly và task cách ly mở để tự thử.
+
+### Tự hoàn thành FEFO rồi xem giá đổi
+
+1. Sau seed, tìm **YOGURT-4 · Sữa chua Vinamilk có đường lốc 4 hộp** và **EGGS-10 · Trứng gà tươi C.P hộp 10 quả** tại kiosk NT-Q5: giá lần lượt **31.000 ₫** và **34.500 ₫**, chưa có nhãn giảm. Lô sớm nhất của mỗi sản phẩm đang `AVAILABLE`, HSD +3 ngày, có task FEFO `OPEN` tại NT-Q5; ghi chú ngày còn lại và mức giảm được tính theo luật thật lúc seed.
+2. Đăng nhập `/staff` bằng `staff@demo.bhx`, chọn cửa hàng **BHX Nguyễn Trãi**, mở **Nhiệm vụ → FEFO**. Mở **Dán nhãn FEFO sữa chua** hoặc **Dán nhãn FEFO trứng gà**, kiểm tra đúng mã lô/HSD, thực hiện dán nhãn rồi bấm **Xác nhận đã dán nhãn**. Chờ thông báo **Đã áp dụng nhãn FEFO.**; Manager chỉ xem, không hoàn thành thay Staff.
+3. Tải lại trang kiosk và tìm lại sản phẩm để tránh dữ liệu chi tiết đã cache trong phiên. Hoàn thành ngay sau seed áp mức 20%: YOGURT **24.800 ₫** (giá gốc **31.000 ₫**) và EGGS **27.600 ₫** (giá gốc **34.500 ₫**), kèm **Giảm 20%** ở thẻ và chi tiết.
+4. Mức giảm lấy theo luật tại thời điểm hoàn thành: còn ≤3 ngày giảm 20%, còn ≤1 ngày giảm 30%; tới ngày HSD thì cách ly, không bán. Không cộng dồn phần trăm: mức bằng/thấp hơn hiện tại bị từ chối; nâng 20% lên 30% sẽ thay mức cũ.
 
 ### Quét ESL độc lập và QR demo
 

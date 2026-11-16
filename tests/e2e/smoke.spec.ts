@@ -258,6 +258,56 @@ test("product detail cache ignores stale openExact search after automatic reset"
   expect(detailRequests).toBe(0);
 });
 
+test("seeded FEFO demo preserves markdown and regular prices with printable barcode and ESL fixtures", async ({ page }) => {
+  // Read the real seed through the public UI; this scenario never writes to the database.
+  await page.goto("/kiosk");
+  const storeSelector = page.getByRole("combobox");
+  await expect(storeSelector).not.toHaveValue("");
+  await storeSelector.selectOption("NT-Q5");
+  await expect(storeSelector).toHaveValue("NT-Q5");
+
+  for (const fixture of [
+    { query: "GREENS-500", name: "Cải xanh VietGAP gói 500g", current: "14.320 ₫", original: "17.900 ₫" },
+    { query: "BREAD-300", name: "Bánh mì sandwich lúa mạch 300g", current: "22.800 ₫", original: "28.500 ₫" },
+    { query: "MILK-1L", name: "Sữa tươi Vinamilk 100% 1L", current: "32.600 ₫", original: null },
+  ]) {
+    await page.getByPlaceholder(/Tìm sữa/i).fill(fixture.query);
+    await page.getByRole("button", { name: "Tìm kiếm", exact: true }).click();
+    const card = page.locator(".product-card").filter({ hasText: fixture.name });
+    await expect(card.locator(".product-price")).toHaveText(fixture.current);
+    if (fixture.original) {
+      await expect(card.locator(".original-price")).toHaveText(fixture.original);
+      await expect(card.locator(".original-price")).toHaveCSS("text-decoration-line", "line-through");
+      await expect(card.locator(".discount-badge")).toHaveText("Giảm 20%");
+    } else {
+      await expect(card.locator(".original-price, .discount-badge")).toHaveCount(0);
+    }
+    await page.getByRole("button", { name: "Quay lại", exact: true }).click();
+  }
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Mã vạch sản phẩm demo", exact: true }).click();
+  await expect(page).toHaveURL(/\/demo\/barcodes$/);
+  await expect(page.getByRole("heading", { name: "Mã vạch sản phẩm demo", exact: true })).toBeVisible();
+  await page.getByLabel("Cửa hàng", { exact: true }).selectOption({ label: "BHX Nguyễn Trãi (NT-Q5)" });
+  await page.getByRole("button", { name: "Xem mã vạch", exact: true }).click();
+  const barcode = page.locator(".barcode-card").filter({ hasText: "MILK-1L" });
+  await expect(barcode.getByRole("img", { name: "Mã vạch EAN-13 8934673574211", exact: true })).toBeVisible();
+  await expect(barcode).toContainText("L-02 · Kệ sữa tươi");
+  await expect(page.getByRole("button", { name: "In A4", exact: true })).toBeEnabled();
+
+  await page.goto("/");
+  await page.getByRole("link", { name: "Nhãn ESL demo", exact: true }).click();
+  await expect(page).toHaveURL(/\/demo\/esl-labels$/);
+  await expect(page.getByRole("heading", { name: "Nhãn ESL để in", exact: true })).toBeVisible();
+  await page.getByLabel("Cửa hàng", { exact: true }).selectOption({ label: "BHX Nguyễn Trãi (NT-Q5)" });
+  await page.getByRole("button", { name: "Xem nhãn", exact: true }).click();
+  const esl = page.locator(".esl-label-card").filter({ hasText: "ESL-NT-Q5-L-02" });
+  await expect(esl.getByRole("img", { name: "QR cho ESL-NT-Q5-L-02", exact: true })).toBeVisible();
+  await expect(esl).toContainText("Sữa tươi Vinamilk 100% 1L");
+  await expect(page.getByRole("button", { name: "In A4", exact: true })).toBeEnabled();
+});
+
 test("discounted FEFO price is consistent in kiosk list and detail", async ({ page, request }) => {
   nextEnv.loadEnvConfig(process.cwd());
   const { prisma } = await import("../../src/lib/db");
