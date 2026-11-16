@@ -4,6 +4,7 @@ import { Activity, ClipboardList, Boxes, Database, LayoutGrid, LoaderCircle, Log
 import type { Session } from "next-auth";
 import { signOut } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { StaffNotificationCenter, type StaffNotification } from "@/components/staff-notification-center";
 import { TaskForm, type TaskReferences } from "@/components/admin/forms/task-form";
 import { AdminTaskPanel, type AdminTask } from "@/components/admin/admin-task-panel";
 import { StoreForm } from "@/components/admin/forms/store-form";
@@ -30,7 +31,7 @@ type Esl = { id: string; code: string; storeId: string; shelfId: string; product
 type Shelf = { id: string; storeId: string; zoneId: string | null; code: string; label: string; x: number; y: number; width: number; height: number; zone: { name: string } | null; esls: Esl[] };
 type Product = { id: string; sku: string; barcode: string; name: string; category: string; unit: string; basePriceVnd: number; emoji: string; active: boolean };
 type Inventory = { id: string; onShelf: number; backroom: number; capacity: number; lowThreshold: number; version: number; product: Product; shelf: Shelf; store: { name: string } };
-type Overview = { tasks: AdminTask[]; taskReferences: TaskReferences; generatedAt: string; selectedStoreId: string; stores: StoreData[]; users: { id: string; name: string; email: string; role: "STAFF" | "MANAGER" | "ADMIN"; active: boolean; userStores: { storeId: string; isDefault: boolean; store: { id: string; name: string } }[] }[]; products: Product[]; suppliers: { id: string; code: string; name: string; country: string; certificate: string | null; active: boolean }[]; lots: { id: string; storeId: string; productId: string; supplierId: string; receivedAt: string; batchCode: string; origin: string; expiryDate: string; quantity: number; status: string; markdownPercent: number | null; product: Product; supplier: { name: string }; store: { name: string } }[]; inventories: Inventory[]; integrations: { id: string; externalEventId: string; type: string; status: string; error: string | null; createdAt: string }[]; audits: { id: string; action: string; entityType: string; actor: { name: string } | null; createdAt: string }[]; rules: { id: string; storeId: string; daysRemaining: number; discountPercent: number; quarantine: boolean; active: boolean }[] };
+type Overview = { notifications: StaffNotification[]; tasks: AdminTask[]; taskReferences: TaskReferences; generatedAt: string; selectedStoreId: string; stores: StoreData[]; users: { id: string; name: string; email: string; role: "STAFF" | "MANAGER" | "ADMIN"; active: boolean; userStores: { storeId: string; isDefault: boolean; store: { id: string; name: string } }[] }[]; products: Product[]; suppliers: { id: string; code: string; name: string; country: string; certificate: string | null; active: boolean }[]; lots: { id: string; storeId: string; productId: string; supplierId: string; receivedAt: string; batchCode: string; origin: string; expiryDate: string; quantity: number; status: string; markdownPercent: number | null; product: Product; supplier: { name: string }; store: { name: string } }[]; inventories: Inventory[]; integrations: { id: string; externalEventId: string; type: string; status: string; error: string | null; createdAt: string }[]; audits: { id: string; action: string; entityType: string; actor: { name: string } | null; createdAt: string }[]; rules: { id: string; storeId: string; daysRemaining: number; discountPercent: number; quarantine: boolean; active: boolean }[] };
 const resources = { store: "stores", inventory: "inventories", product: "products", supplier: "suppliers", lot: "lots", zone: "zones", shelf: "shelves", esl: "esls", "fefo-rule": "fefo-rules", user: "users", task: "tasks" } as const;
 const destructiveActions = {
   store: { action: "deactivate", title: "Vô hiệu hoá cửa hàng", description: "Cửa hàng sẽ ngừng hoạt động.", confirmLabel: "Vô hiệu hoá" },
@@ -80,11 +81,15 @@ export function AdminApp({ user }: { user: Session["user"] }) {
   const loadGenerationRef = useRef(0);
   const loadStoreIdRef = useRef<string | null>(storeId);
   const activeLoadRef = useRef<{ controller: AbortController; promise: Promise<boolean>; followup?: Promise<boolean> } | null>(null);
+  const readPendingRef = useRef<{ storeId: string; previous: StaffNotification[]; readAt: string } | null>(null);
+  const readVersionsRef = useRef(new Map<string, number>());
+  const confirmedReadsRef = useRef(new Map<string, Map<string, string>>());
   const canAdmin = user.role === "ADMIN";
   const notify = useCallback((message: string, error = false) => { if (error) toast.error(message); else toast.success(message); }, []);
   const load = useCallback(async function loadStore(afterWrite = false, refreshAfterPending = false, requireVisible = false): Promise<boolean> {
     if (storeId !== loadStoreIdRef.current || (requireVisible && document.visibilityState !== "visible")) return false;
     const generation = loadGenerationRef.current;
+    const readVersion = readVersionsRef.current.get(storeId) || 0;
     const active = activeLoadRef.current;
     if (active) {
       if (!afterWrite && !refreshAfterPending) return active.promise;
@@ -100,7 +105,14 @@ export function AdminApp({ user }: { user: Session["user"] }) {
         const response = await fetchWithTimeout(`/api/admin/overview${storeId ? `?storeId=${encodeURIComponent(storeId)}` : ""}`, { cache: "no-store" }, controller);
         if (!response.ok) throw new Error("Overview refresh failed");
         const result: Overview = await response.json();
-        if (!isCurrent()) return false;
+        if (!isCurrent() || readVersion !== (readVersionsRef.current.get(storeId) || 0)) return false;
+        const confirmed = confirmedReadsRef.current.get(result.selectedStoreId);
+        const pending = readPendingRef.current?.storeId === result.selectedStoreId ? readPendingRef.current : null;
+        const pendingIds = new Set(pending?.previous.map(item => item.id));
+        result.notifications = (result.notifications || []).map(item => {
+          const readAt = confirmed?.get(item.id) || (pendingIds.has(item.id) ? pending?.readAt : null);
+          return !item.readAt && readAt ? { ...item, readAt } : item;
+        });
         setData(result);
         if (!storeId && result.selectedStoreId) setStoreId(result.selectedStoreId);
         return true;
@@ -147,6 +159,45 @@ export function AdminApp({ user }: { user: Session["user"] }) {
   const lowCount = data?.inventories.filter((item) => item.onShelf <= item.lowThreshold).length || 0;
   const referenceTime = data ? new Date(data.generatedAt).getTime() : 0;
   const expiring = data?.lots.filter((lot) => (new Date(lot.expiryDate).getTime() - referenceTime) / 86400000 <= 3).length || 0;
+
+  async function markNotificationsRead(requestedIds: string[]): Promise<boolean> {
+    if (!data || data.selectedStoreId !== storeId || readPendingRef.current) return false;
+    const requested = new Set(requestedIds);
+    const previous = data.notifications.filter((item) => !item.readAt && requested.has(item.id));
+    const ids = previous.map((item) => item.id);
+    const displayedIds = new Set(ids);
+    const readAt = new Date().toISOString();
+    readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
+    readPendingRef.current = { storeId, previous, readAt };
+    setData((current) => current?.selectedStoreId === storeId ? { ...current, notifications: current.notifications.map((item) => !item.readAt && displayedIds.has(item.id) ? { ...item, readAt } : item) } : current);
+    try {
+      const response = await fetch("/api/staff/notifications", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storeId, ids }),
+      });
+      if (!response.ok) throw new Error("Read update failed");
+      const result = await response.json() as { readAt: string };
+      const confirmed = confirmedReadsRef.current.get(storeId) || new Map<string, string>();
+      for (const id of ids) confirmed.set(id, result.readAt);
+      confirmedReadsRef.current.set(storeId, confirmed);
+      // Invalidate responses that started before the confirmed read.
+      readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
+      setData((current) => current?.selectedStoreId === storeId ? {
+        ...current, notifications: current.notifications.map((item) => displayedIds.has(item.id) && item.readAt === readAt ? { ...item, readAt: result.readAt } : item),
+      } : current);
+      return true;
+    } catch {
+      const previousById = new Map(previous.map((item) => [item.id, item]));
+      setData((current) => current?.selectedStoreId === storeId ? {
+        ...current,
+        notifications: current.notifications.map((item) => item.readAt === readAt ? previousById.get(item.id) || item : item),
+      } : current);
+      return false;
+    } finally {
+      // A response started before completion may still contain pre-PATCH unread rows.
+      readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
+      readPendingRef.current = null;
+    }
+  }
 
   async function api(url: string, method: string, body?: unknown, feedback: "toast" | "dialog" = "toast"): Promise<ApiMutationResult> {
     let response: Response;
@@ -266,7 +317,7 @@ export function AdminApp({ user }: { user: Session["user"] }) {
     return result.ok ? true : { ok: false as const, error: result.message };
   }
   const nav = [{ id:"overview",label:"Tổng quan",icon:LayoutGrid },{ id:"tasks",label:"Nhiệm vụ",icon:ClipboardList },{ id:"inventory",label:"Tồn kho",icon:Boxes },{ id:"catalog",label:"Danh mục",icon:PackageSearch },{ id:"map",label:"Sơ đồ & ESL",icon:Store },{ id:"fefo",label:"FEFO",icon:Settings2 },{ id:"users",label:"Người dùng",icon:Users },{ id:"integrations",label:"Tích hợp",icon:Database }] as const;
-  return <main className="app-shell admin-shell"><aside className="sidebar"><Logo inverse /><div className="store-selector"><label>Cửa hàng quản trị</label><select value={storeId} onChange={(e) => setStoreId(e.target.value)}>{data?.stores.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><nav className="side-nav">{nav.map(({id,label,icon:Icon}) => <button key={id} className={tab===id?"active":""} onClick={() => setTab(id)}><Icon />{label}</button>)}</nav><div className="user-card"><span className="user-avatar">AD</span><span><strong>{user.name}</strong><small>{DEMO_ACCOUNTS.find((account) => account.role === user.role)?.label || user.role}</small></span><button onClick={() => signOut({callbackUrl:"/"})}><LogOut /></button></div></aside><section className="workspace"><header className="workspace-header"><div><span className="section-label">{store?.code}</span><h1>{nav.find((item)=>item.id===tab)?.label}</h1><p>{store?.address}</p></div><div className="header-actions"><span className="connection-pill"><span className="live-dot" />Đã đồng bộ</span><button className="icon-button" aria-label="Tải lại dữ liệu" data-admin-dialog-fallback disabled={loading} onClick={() => void load()}><RefreshCw className={loading?"spin":""}/></button></div></header>
+  return <main className="app-shell admin-shell"><aside className="sidebar"><Logo inverse /><div className="store-selector"><label>Cửa hàng quản trị</label><select value={storeId} onChange={(e) => setStoreId(e.target.value)}>{data?.stores.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><nav className="side-nav">{nav.map(({id,label,icon:Icon}) => <button key={id} className={tab===id?"active":""} onClick={() => setTab(id)}><Icon />{label}</button>)}</nav><div className="user-card"><span className="user-avatar">AD</span><span><strong>{user.name}</strong><small>{DEMO_ACCOUNTS.find((account) => account.role === user.role)?.label || user.role}</small></span><button onClick={() => signOut({callbackUrl:"/"})}><LogOut /></button></div></aside><section className="workspace"><header className="workspace-header"><div><span className="section-label">{store?.code}</span><h1>{nav.find((item)=>item.id===tab)?.label}</h1><p>{store?.address}</p></div><div className="header-actions"><span className="connection-pill"><span className="live-dot" />Đã đồng bộ</span><StaffNotificationCenter key={storeId} storeId={storeId} notifications={data?.selectedStoreId === storeId ? data.notifications : []} onRead={markNotificationsRead} /><button className="icon-button" aria-label="Tải lại dữ liệu" data-admin-dialog-fallback disabled={loading} onClick={() => void load()}><RefreshCw className={loading?"spin":""}/></button></div></header>
   {tab==="overview"&&<><div className="metric-grid"><AdminMetric icon={Store} label="Cửa hàng" value={data?.stores.length||0}/><AdminMetric icon={Boxes} label="SKU tại cửa hàng" value={data?.inventories.length||0}/><AdminMetric icon={Activity} label="Kệ sắp hết" value={lowCount} alert/><AdminMetric icon={ShieldCheck} label="Lô cần FEFO" value={expiring}/></div>{canAdmin&&<div className="admin-actions"><button className="button" onClick={createStore}><Plus/>Thêm cửa hàng</button><button className="button" disabled={!store} onClick={editStore}>Sửa cửa hàng</button>{store&&<button className="button danger" onClick={()=>requestRemoval("store",store.id,store.name)}>Vô hiệu hoá</button>}</div>}<div className="admin-grid"><section className="panel"><Panel title="Tồn kho gần đây"/><InventoryTable items={data?.inventories.slice(0,6)||[]} onEdit={editInventory}/></section><section className="panel"><Panel title="Luồng tích hợp"/><div className="log-list">{data?.integrations.slice(0,8).map((event)=><div className="log-row" key={event.id}><code>{event.type}</code><span>{event.externalEventId}</span><span className={`badge ${event.status==="PROCESSED"?"open":"blocked"}`}>{event.status}</span></div>)}</div></section></div></>}
   {tab==="tasks"&&<AdminTaskPanel key={store?.id || "no-store"} tasks={data?.tasks || []} assignees={data?.taskReferences?.assignees || []} canCreate={Boolean(store && data?.taskReferences?.products.length)} onCreate={() => { if (store) setDialog({ kind: "task", mode: "create", defaultValues: { storeId: store.id } }); }} />}
   {tab==="inventory"&&<section className="panel"><Panel title="Tồn kệ và kho sau"/><InventoryTable items={data?.inventories||[]} onEdit={editInventory}/></section>}

@@ -4,7 +4,7 @@ export type PushSetupResult =
   | { status: "enabled" }
   | { status: "unsupported" | "denied" | "worker-unavailable" | "backend-unconfigured" | "failed"; message: string };
 
-type PushFailure = Exclude<PushSetupResult, { status: "enabled" }>;
+export type PushFailure = Exclude<PushSetupResult, { status: "enabled" }> & { retry?: "disable" };
 export type PreparedDevicePush = { registration: ServiceWorkerRegistration; applicationServerKey: Uint8Array<ArrayBuffer> };
 type PushPreparationResult = { status: "ready"; prepared: PreparedDevicePush } | PushFailure;
 let preparationInFlight: Promise<PushPreparationResult> | null = null;
@@ -114,4 +114,50 @@ async function attemptSetup(prepared?: PreparedDevicePush): Promise<PushSetupRes
 export function setupDevicePush(prepared?: PreparedDevicePush): Promise<PushSetupResult> {
   if (!inFlight) inFlight = attemptSetup(prepared).finally(() => { inFlight = null; });
   return inFlight;
+}
+
+export type PushDisableResult = { status: "disabled" } | PushFailure;
+const pendingCleanup = new WeakMap<ServiceWorkerContainer, string>();
+let disableInFlight: Promise<PushDisableResult> | null = null;
+const deviceFailure: PushFailure = { status: "failed", message: "Không thể kiểm tra thông báo trên thiết bị. Hãy thử lại." };
+
+// Inspect only: opening the center must not register a worker or prompt for permission.
+export async function getDevicePushState(): Promise<"enabled" | "disabled" | PushFailure> {
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator) || typeof PushManager === "undefined") return "disabled";
+    const worker = navigator.serviceWorker;
+    if (pendingCleanup.has(worker)) return { status: "failed", retry: "disable", message: "Chưa hoàn tất tắt thông báo trên thiết bị. Nhấn tắt để thử lại." };
+    const registration = await bounded(worker.getRegistration(), 5_000, deviceFailure);
+    return registration?.pushManager && await bounded(registration.pushManager.getSubscription(), 8_000, deviceFailure) ? "enabled" : "disabled";
+  } catch (error) { return error instanceof PushSetupFailure ? error.result : deviceFailure; }
+}
+
+async function attemptDisable(): Promise<PushDisableResult> {
+  const failure: PushFailure = { status: "failed", message: "Không thể tắt thông báo trên thiết bị. Hãy thử lại." };
+  try {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return { status: "disabled" };
+    const worker = navigator.serviceWorker;
+    let endpoint = pendingCleanup.get(worker);
+    const registration = await bounded(worker.getRegistration(), 5_000, failure);
+    const subscription = registration?.pushManager && await bounded(registration.pushManager.getSubscription(), 8_000, failure);
+    if (!endpoint && !subscription) return { status: "disabled" };
+    if (subscription) {
+      endpoint = subscription.endpoint;
+      // Retain before unsubscribe: even a timeout can finish removing it locally.
+      pendingCleanup.set(worker, endpoint);
+      if (!await bounded(subscription.unsubscribe(), 8_000, failure)) return failure;
+    }
+    const controller = new AbortController();
+    const response = await bounded(fetch("/api/push/subscriptions", {
+      method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ endpoint }), signal: controller.signal,
+    }), 8_000, failure, () => controller.abort());
+    if (!response.ok) return failure;
+    pendingCleanup.delete(worker);
+    return { status: "disabled" };
+  } catch (error) { return error instanceof PushSetupFailure ? error.result : failure; }
+}
+
+export function disableDevicePush(): Promise<PushDisableResult> {
+  if (!disableInFlight) disableInFlight = attemptDisable().finally(() => { disableInFlight = null; });
+  return disableInFlight;
 }

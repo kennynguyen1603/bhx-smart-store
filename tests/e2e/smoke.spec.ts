@@ -1005,7 +1005,7 @@ test("mobile notification remains topmost and enables push only through explicit
       releaseFirstPost();
     }
     await expect(page.getByText("Đã bật Web Push cho thiết bị này.")).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Tắt thông báo trên thiết bị", exact: true })).toBeEnabled();
     await page.keyboard.press("Escape");
     await expect(notification).toBeEnabled();
   }
@@ -1350,6 +1350,10 @@ test("realtime task sync reaches Staff then Admin and Manager within six seconds
     await manager.getByRole("button", { name: "Hoàn thành", exact: true }).click();
     await expect(manager.locator(".task-row").filter({ hasText: marker })).toContainText("Hoàn thành", { timeout: Math.max(1, 6000 - (Date.now() - completedAt)) });
     const oversightDelay = Date.now() - completedAt; expect(oversightDelay).toBeLessThan(6000);
+    for (const client of [admin, manager]) {
+      await client.locator(".notification-button").click();
+      await expect(client.getByRole("dialog", { name: "Thông báo", exact: true }).locator(".notification-row").filter({ hasText: marker })).toContainText("Nhiệm vụ hoàn thành");
+    }
     console.log(`realtime: Admin→Staff ${staffDelay}ms; Staff→Admin+Manager ${oversightDelay}ms`);
   } finally {
     await Promise.allSettled([staffContext.close(), managerContext.close()]);
@@ -1459,3 +1463,65 @@ test("offline queue retries on visible return after startup 503 without duplicat
     open.onsuccess = () => { const db = open.result, count = db.transaction("mutations").objectStore("mutations").count(); count.onsuccess = () => { db.close(); resolve(count.result); }; };
   }))).toBe(0);
 });
+
+test("push toggle disables once, retries cleanup, and keeps in-app notifications available", async ({ page }) => {
+  await page.addInitScript(() => {
+    let subscription: object | null;
+    const counters = { unsubscribe: 0 };
+    Object.assign(window, { pushToggleCounters: counters });
+    subscription = { endpoint: "https://push.example/toggle", unsubscribe: async () => { counters.unsubscribe++; subscription = null; return true; } };
+    Object.defineProperty(window, "PushManager", { configurable: true, value: function PushManager() {} });
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { getRegistration: async () => ({ pushManager: { getSubscription: async () => subscription } }) } });
+  });
+  let deletes = 0;
+  await page.route("**/api/push/subscriptions", async route => {
+    expect(route.request().method()).toBe("DELETE");
+    expect(route.request().postDataJSON()).toEqual({ endpoint: "https://push.example/toggle" });
+    deletes++; await route.fulfill({ status: deletes === 1 ? 503 : 204 });
+  });
+  await authenticateStaffApp(page, "staff@demo.bhx");
+  await page.locator(".notification-button").click();
+  const dialog = page.getByRole("dialog", { name: "Thông báo", exact: true });
+  const disable = dialog.getByRole("button", { name: "Tắt thông báo trên thiết bị", exact: true });
+  await disable.click(); await expect(disable).toBeEnabled();
+  await expect(dialog).toContainText("Không thể tắt thông báo");
+  await disable.click(); await expect(dialog.getByRole("button", { name: "Bật thông báo trên thiết bị", exact: true })).toBeEnabled();
+  expect(deletes).toBe(2);
+  expect(await page.evaluate(() => (window as typeof window & { pushToggleCounters: { unsubscribe: number } }).pushToggleCounters.unsubscribe)).toBe(1);
+  await expect(dialog.getByRole("button", { name: "Đánh dấu tất cả đã đọc", exact: true })).toBeVisible();
+});
+
+for (const admin of [false, true]) {
+  test(admin ? "Admin notification receives polling arrivals and reads individually" : "individual notification reads only one row and mark-all remains available", async ({ page }) => {
+    const rows = ["first", "second"].map(id => ({ id, type: "TASK_COMPLETED", title: `Task ${id} đã hoàn thành`, body: "Kệ đã được bổ sung", readAt: null as string | null, createdAt: new Date().toISOString(), taskId: null }));
+    let storeId = "", token = "baseline";
+    const reads: string[][] = [];
+    await page.route(admin ? "**/api/admin/overview**" : "**/api/staff/tasks?**", async route => {
+      const response = await route.fetch(); expect(response.ok()).toBe(true); const data = await response.json(); storeId = data.selectedStoreId;
+      await route.fulfill({ json: { ...data, notifications: rows } });
+    });
+    await page.route("**/api/store-changes**", route => route.fulfill({ json: { token, taskUpdatedAt: null, notificationUpdatedAt: null, unreadCount: rows.filter(row => !row.readAt).length } }));
+    await page.route("**/api/staff/notifications", async route => {
+      const body = route.request().postDataJSON(); expect(body.storeId).toBe(storeId); reads.push(body.ids);
+      for (const row of rows) if (body.ids.includes(row.id)) row.readAt = new Date().toISOString();
+      await route.fulfill({ json: { updated: body.ids.length, readAt: new Date().toISOString() } });
+    });
+    await authenticateStaffApp(page, admin ? "admin@demo.bhx" : "staff@demo.bhx");
+    if (admin) await page.goto("/admin");
+    await expect(page.locator(".notification-button")).toHaveText("2");
+    // Establish polling baseline before injecting an outcome notification.
+    await page.waitForResponse(response => new URL(response.url()).pathname === "/api/store-changes");
+    await page.locator(".notification-button").click();
+    const dialog = page.getByRole("dialog", { name: "Thông báo", exact: true });
+    await dialog.locator(".notification-row").first().getByRole("button", { name: "Đánh dấu đã đọc", exact: true }).click();
+    await expect(page.locator(".notification-button")).toHaveText("1"); expect(reads).toEqual([["first"]]);
+    if (admin) {
+      rows.push({ ...rows[1], id: "arrival", title: "Task mới bị chặn" }); token = "changed";
+      await expect(dialog.getByText("Task mới bị chặn")).toBeVisible({ timeout: 6000 });
+      await expect(page.locator(".notification-button")).toHaveText("2");
+    }
+    await dialog.getByRole("button", { name: "Đánh dấu tất cả đã đọc", exact: true }).click();
+    await expect(page.locator(".notification-button")).toHaveText("");
+    expect(reads[1]).toEqual(admin ? ["second", "arrival"] : ["second"]);
+  });
+}

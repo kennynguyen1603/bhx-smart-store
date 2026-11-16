@@ -14,7 +14,7 @@ export async function GET(request: Request) {
     const scope = { storeId: selectedStoreId || { in: [] as string[] } };
     const activeStatuses = [TaskStatus.OPEN, TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED];
     const taskInclude = { product: true, shelf: true, lot: true, assignee: { select: { id: true, name: true } } } as const;
-    const [stores, users, products, suppliers, lots, inventories, integrations, audits, rules, activeTasks, terminalTasks, assignees, taskLots] = await Promise.all([
+    const [stores, users, products, suppliers, lots, inventories, integrations, audits, rules, activeTasks, terminalTasks, assignees, taskLots, notifications] = await Promise.all([
       prisma.store.findMany({ where: { id: { in: storeIds } }, include: { zones: true, shelves: { include: { zone: true, esls: { include: { product: true } } } }, kiosks: true }, orderBy: { name: "asc" } }),
       prisma.user.findMany({ where: user.role === Role.ADMIN ? {} : { userStores: { some: { storeId: { in: user.storeIds } } } }, select: { id: true, email: true, name: true, role: true, active: true, userStores: { include: { store: { select: { id: true, name: true } } } } }, orderBy: { name: "asc" } }),
       prisma.product.findMany({ orderBy: { name: "asc" } }),
@@ -28,6 +28,7 @@ export async function GET(request: Request) {
       prisma.task.findMany({ where: { ...scope, status: { notIn: activeStatuses } }, include: taskInclude, orderBy: [{ createdAt: "desc" }, { id: "asc" }], take: 100 }),
       prisma.user.findMany({ where: { active: true, role: Role.STAFF, userStores: { some: scope } }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
       prisma.lot.findMany({ where: scope, select: { id: true, batchCode: true, productId: true, expiryDate: true }, orderBy: [{ expiryDate: "asc" }, { id: "asc" }] }),
+      prisma.notification.findMany({ where: { ...scope, userId: user.id }, orderBy: [{ createdAt: "desc" }, { id: "asc" }], take: 30 }),
     ]);
     const taskProducts = [...new Map(inventories.map(item => [item.productId, { id: item.productId, name: item.product.name }])).values()].sort((a, b) => a.name.localeCompare(b.name));
     const taskShelves = [...new Set(inventories.map(item => item.shelfId))].map(id => ({
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
     }));
     const taskReferences = { products: taskProducts, shelves: taskShelves, lots: taskLots.map(lot => ({ id: lot.id, name: lot.batchCode, productId: lot.productId })), assignees };
     const tasks = [...activeTasks, ...terminalTasks].slice(0, 100);
-    return Response.json({ generatedAt: new Date().toISOString(), selectedStoreId, stores, users, products, suppliers, lots, inventories, integrations, audits, rules, tasks, taskReferences });
+    return Response.json({ generatedAt: new Date().toISOString(), selectedStoreId, stores, users, products, suppliers, lots, inventories, integrations, audits, rules, tasks, taskReferences, notifications });
   } catch (error) {
     return apiErrorResponse(error);
   }

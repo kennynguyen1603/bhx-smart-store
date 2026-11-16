@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "next-auth";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { StaffApp } from "@/components/staff-app";
-import { prepareDevicePush, setupDevicePush } from "@/lib/push-client";
+import { disableDevicePush, getDevicePushState, prepareDevicePush, setupDevicePush } from "@/lib/push-client";
 import { cacheStaffPayload, getCachedStaffPayload, markCachedStaffNotificationsRead } from "@/lib/offline";
 
 vi.mock("next-auth/react", () => ({ signOut: vi.fn() }));
@@ -39,7 +39,7 @@ const staffPayload = {
   tasks: [], inventories: [], notifications, recentEvents: [],
   metrics: { openTasks: 0, highPriority: 0, lowShelves: 0, fefoTasks: 0, completionRate: 100 },
 };
-const subscription = { toJSON: () => ({ endpoint: "https://push.example/subscription", keys: { auth: "auth", p256dh: "key" } }) };
+const subscription = { endpoint: "https://push.example/subscription", unsubscribe: vi.fn(async () => true), toJSON: () => ({ endpoint: "https://push.example/subscription", keys: { auth: "auth", p256dh: "key" } }) };
 let container: HTMLDivElement;
 let root: Root;
 let fetchMock: Mock<typeof fetch>;
@@ -88,6 +88,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   workerDescriptor = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
   payload = structuredClone(staffPayload);
+  subscription.unsubscribe.mockReset().mockResolvedValue(true);
   pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 201 }) : Response.json({ configured: true, publicKey: "AQIDBA" });
   readRequest = async () => Response.json({ updated: 1, readAt: "2026-11-16T03:00:00.000Z" });
   fetchMock = vi.fn(async (input, init) => {
@@ -116,7 +117,7 @@ describe("Staff notification center", () => {
     expect(dialog?.textContent).toContain("Kệ sữa chỉ còn 2 hộp."); expect(dialog?.textContent).toContain("Kiểm tra hạn sử dụng");
     expect(dialog?.querySelector("time")?.dateTime).toBe("2026-11-16T01:30:00.000Z");
     expect(dialog?.querySelector("time")?.textContent).toMatch(/\d{2}:\d{2}/); expect(bell().textContent).toBe("1");
-    expect(apis.requestPermission).not.toHaveBeenCalled(); expect(apis.worker.getRegistration).not.toHaveBeenCalled();
+    expect(apis.requestPermission).not.toHaveBeenCalled(); expect(apis.worker.getRegistration).toHaveBeenCalledOnce();
     expect(apis.worker.register).not.toHaveBeenCalled(); expect(pushCalls("GET")).toHaveLength(0); expect(pushCalls("POST")).toHaveLength(0);
     expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/staff/notifications")).toBe(false);
   });
@@ -249,7 +250,7 @@ describe("deliberate device push setup", () => {
     if (stage === "backend readiness") {
       pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 201 }) : new Promise((resolve) => { finishReadiness = resolve; });
     } else {
-      apis.worker.getRegistration.mockResolvedValueOnce(undefined);
+      apis.worker.getRegistration.mockImplementationOnce(apis.worker.getRegistration.getMockImplementation()!).mockResolvedValueOnce(undefined);
       apis.worker.register.mockResolvedValueOnce({ active: null, installing, waiting: null, pushManager: { subscribe: apis.subscribe, getSubscription: apis.getSubscription } });
     }
     await render(); await openCenter();
@@ -276,7 +277,7 @@ describe("deliberate device push setup", () => {
     expect(permissionWasSynchronous).toBe(true);
     expect(apis.requestPermission).toHaveBeenCalledOnce();
     expect(pushCalls("GET")).toHaveLength(1);
-    expect(apis.worker.getRegistration).toHaveBeenCalledOnce();
+    expect(apis.worker.getRegistration).toHaveBeenCalledTimes(2);
     expect(apis.subscribe).toHaveBeenCalledOnce(); expect(pushCalls("POST")).toHaveLength(1);
     expect(document.body.textContent).toContain("Đã bật Web Push cho thiết bị này.");
     expect(document.querySelector(".toast.error")).toBeNull();
@@ -291,7 +292,7 @@ describe("deliberate device push setup", () => {
   ])("renders %s inline without an error toast", async (state, message) => {
     const apis = installPushApis(state === "denied" ? "denied" : "default");
     if (state === "unsupported") vi.stubGlobal("Notification", undefined);
-    if (state === "worker") apis.worker.getRegistration.mockRejectedValueOnce(new Error("raw worker error"));
+    if (state === "worker") apis.worker.getRegistration.mockRejectedValue(new Error("raw worker error"));
     if (state === "unconfigured") pushRequest = async () => Response.json({ configured: false, publicKey: null });
     if (state === "persistence") pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 503 }) : Response.json({ configured: true, publicKey: "AQIDBA" });
     if (state === "readiness") pushRequest = async () => { throw new TypeError("Failed to fetch"); };
@@ -309,8 +310,8 @@ describe("deliberate device push setup", () => {
     expect(pushCalls("GET")).toHaveLength(1); expect(apis.requestPermission).toHaveBeenCalledOnce();
     const readinessCall = fetchMock.mock.calls.findIndex(([input, init]) => String(input) === "/api/push/subscriptions" && !init?.method);
     expect(readinessCall).toBeGreaterThanOrEqual(0);
-    expect(fetchMock.mock.invocationCallOrder[readinessCall]).toBeLessThan(apis.worker.getRegistration.mock.invocationCallOrder[0]);
-    expect(apis.worker.getRegistration.mock.invocationCallOrder[0]).toBeLessThan(apis.requestPermission.mock.invocationCallOrder[0]);
+    expect(fetchMock.mock.invocationCallOrder[readinessCall]).toBeLessThan(apis.worker.getRegistration.mock.invocationCallOrder[1]);
+    expect(apis.worker.getRegistration.mock.invocationCallOrder[1]).toBeLessThan(apis.requestPermission.mock.invocationCallOrder[0]);
     expect(apis.subscribe).toHaveBeenCalledWith({ userVisibleOnly: true, applicationServerKey: new Uint8Array([1, 2, 3, 4]) });
     expect(JSON.parse(String(pushCalls("POST")[0][1]?.body))).toEqual(subscription.toJSON());
     expect(document.body.textContent).toContain("Đã bật Web Push cho thiết bị này.");
@@ -323,8 +324,7 @@ describe("deliberate device push setup", () => {
   });
   it("reuses an existing subscription and persists it once", async () => {
     const apis = installPushApis(); apis.getSubscription.mockResolvedValueOnce(subscription);
-    await render(); await enable(); expect(apis.subscribe).not.toHaveBeenCalled(); expect(pushCalls("POST")).toHaveLength(1);
-    expect(document.body.textContent).toContain("Đã bật Web Push cho thiết bị này.");
+    expect(await setupDevicePush()).toEqual({ status: "enabled" }); expect(apis.subscribe).not.toHaveBeenCalled(); expect(pushCalls("POST")).toHaveLength(1);
   });
   it("guards same-tick enable clicks and waits for POST success", async () => {
     let finish!: (response: Response) => void;
@@ -412,4 +412,93 @@ describe.each(["Tự chọn một nhiệm vụ", "Chọn trong nhiều nhiệm v
     expect(fetchMock.mock.calls.map(([input]) => String(input)).filter((url) => /\/(start|restock|fefo)$/.test(url))).toHaveLength(0);
     expect([...container.querySelectorAll(".side-nav button")].find((item) => item.textContent?.includes("Nhiệm vụ"))?.classList.contains("active")).toBe(true);
   });
+});
+
+describe("push toggle", () => {
+  it("loads an existing subscription as enabled and disables one lifecycle under rapid clicks", async () => {
+    const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    pushRequest = async () => new Response(null, { status: 204 });
+    await render(); await openCenter();
+    await act(async () => { const action = button("Tắt thông báo trên thiết bị"); action.click(); action.click(); });
+    expect(subscription.unsubscribe).toHaveBeenCalledOnce(); expect(pushCalls("DELETE")).toHaveLength(1);
+    expect(JSON.parse(String(pushCalls("DELETE")[0][1]?.body))).toEqual({ endpoint: "https://push.example/subscription" });
+    expect(button("Bật thông báo trên thiết bị").disabled).toBe(false);
+    expect(bell().textContent).toBe("1");
+  });
+  it("treats a missing subscription as idempotently disabled without a delete", async () => {
+    installPushApis(); expect(await getDevicePushState()).toBe("disabled");
+    expect(await disableDevicePush()).toEqual({ status: "disabled" }); expect(pushCalls("DELETE")).toHaveLength(0);
+  });
+  it("retries server cleanup after local unsubscribe succeeded and the subscription disappeared", async () => {
+    const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    subscription.unsubscribe.mockImplementation(async () => { apis.getSubscription.mockResolvedValue(null); return true; });
+    pushRequest = async () => new Response(null, { status: 503 });
+    await render(); await openCenter(); await click(button("Tắt thông báo trên thiết bị"));
+    expect(button("Tắt thông báo trên thiết bị").disabled).toBe(false);
+    pushRequest = async () => new Response(null, { status: 204 }); await click(button("Tắt thông báo trên thiết bị"));
+    expect(pushCalls("DELETE")).toHaveLength(2); expect(subscription.unsubscribe).toHaveBeenCalledOnce();
+    expect(button("Bật thông báo trên thiết bị").disabled).toBe(false);
+  });
+  it("retries unsubscribe failure without claiming disabled", async () => {
+    const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    subscription.unsubscribe.mockRejectedValueOnce(new Error("browser failed"));
+    pushRequest = async () => new Response(null, { status: 204 });
+    expect(await disableDevicePush()).toMatchObject({ status: "failed" });
+    expect(await disableDevicePush()).toEqual({ status: "disabled" });
+    expect(subscription.unsubscribe).toHaveBeenCalledTimes(2);
+  });
+});
+describe("individual notification", () => {
+  it("sends only the selected ID and rolls back only that row while preserving arrivals", async () => {
+    payload.notifications.push({ ...notifications[0], id: "notification-third", title: "Một thông báo khác" });
+    let finish!: (response: Response) => void; readRequest = () => new Promise(resolve => { finish = resolve; });
+    await render(); await openCenter();
+    await click(document.querySelector<HTMLButtonElement>('.notification-row button[aria-label="Đánh dấu đã đọc"]')!);
+    expect(bell().textContent).toBe("1");
+    const call = fetchMock.mock.calls.find(([url]) => String(url) === "/api/staff/notifications")!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ storeId: "store-1", ids: ["notification-1"] });
+    payload.notifications.push({ ...notifications[0], id: "arrival", title: "Mới đến" });
+    await click(container.querySelector<HTMLButtonElement>('[aria-label="Tải lại"]')!);
+    expect(bell().textContent).toBe("2");
+    await act(async () => finish(new Response(null, { status: 503 })));
+    expect(bell().textContent).toBe("3");
+    readRequest = async () => Response.json({ readAt: "2026-11-17T00:00:00Z" });
+    await click(document.querySelector<HTMLButtonElement>('.notification-row button[aria-label="Đánh dấu đã đọc"]')!);
+    expect(bell().textContent).toBe("2");
+  });
+});
+
+describe("push disable timeouts", () => {
+  it("retains cleanup after a timed-out unsubscribe completes late", async () => {
+    vi.useFakeTimers(); const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    let finish!: (ok: boolean) => void;
+    subscription.unsubscribe.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    pushRequest = async () => new Response(null, { status: 204 });
+    const first = disableDevicePush(); await vi.advanceTimersByTimeAsync(8_000);
+    expect(await first).toMatchObject({ status: "failed" });
+    apis.getSubscription.mockResolvedValue(null); finish(true); await Promise.resolve();
+    expect(await getDevicePushState()).toMatchObject({ status: "failed", retry: "disable" });
+    expect(await disableDevicePush()).toEqual({ status: "disabled" });
+    expect(pushCalls("DELETE")).toHaveLength(1);
+  });
+  it("deduplicates disable calls and retries a false browser unsubscribe result", async () => {
+    const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+    subscription.unsubscribe.mockResolvedValueOnce(false);
+    expect(await disableDevicePush()).toMatchObject({ status: "failed" });
+    expect(pushCalls("DELETE")).toHaveLength(0);
+    pushRequest = async () => new Response(null, { status: 204 });
+    const a = disableDevicePush(), b = disableDevicePush(); expect(a).toBe(b);
+    expect(await a).toEqual({ status: "disabled" });
+    expect(subscription.unsubscribe).toHaveBeenCalledTimes(2); expect(pushCalls("DELETE")).toHaveLength(1);
+  });
+});
+
+it("keeps cleanup retry available after reopening without falsely claiming browser push is enabled", async () => {
+  const apis = installPushApis(); apis.getSubscription.mockResolvedValue(subscription);
+  subscription.unsubscribe.mockImplementation(async () => { apis.getSubscription.mockResolvedValue(null); return true; });
+  pushRequest = async () => new Response(null, { status: 503 });
+  await render(); await openCenter(); await click(button("Tắt thông báo trên thiết bị"));
+  await click(bell()); await openCenter();
+  expect(button("Tắt thông báo trên thiết bị").disabled).toBe(false);
+  expect(document.body.textContent).not.toContain("Đã bật Web Push cho thiết bị này.");
 });

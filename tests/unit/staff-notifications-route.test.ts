@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getServerSession, updateMany } = vi.hoisted(() => ({ getServerSession: vi.fn(), updateMany: vi.fn() }));
+const { getServerSession, updateMany, deleteMany } = vi.hoisted(() => ({ getServerSession: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() }));
 vi.mock("next-auth", () => ({ getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
-vi.mock("@/lib/db", () => ({ prisma: { notification: { updateMany } } }));
+vi.mock("@/lib/db", () => ({ prisma: { notification: { updateMany }, pushSubscription: { deleteMany } } }));
 const user = { id: "staff-1", role: "STAFF", storeIds: ["store-1"], defaultStoreId: "store-1" };
 beforeEach(() => { vi.clearAllMocks(); getServerSession.mockResolvedValue({ user }); updateMany.mockResolvedValue({ count: 2 }); });
 afterEach(() => vi.unstubAllEnvs());
@@ -56,5 +56,23 @@ describe("GET push subscription readiness", () => {
   it.each(["NEXT_PUBLIC_VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"])("reports unconfigured without %s", async (key) => {
     vi.stubEnv(key, ""); const { GET } = await import("@/app/api/push/subscriptions/route");
     expect(await (await GET()).json()).toEqual({ configured: false, publicKey: key === "NEXT_PUBLIC_VAPID_PUBLIC_KEY" ? null : "public-key" });
+  });
+});
+
+describe("DELETE push subscription", () => {
+  async function remove(body: unknown) {
+    const { DELETE } = await import("@/app/api/push/subscriptions/route");
+    return DELETE(new Request("http://localhost/api/push/subscriptions", { method: "DELETE", body: JSON.stringify(body) }));
+  }
+  it.each([{}, { endpoint: "invalid" }, { endpoint: 12 }, null])("rejects invalid endpoint %j before deleting", async body => {
+    expect((await remove(body)).status).toBe(400); expect(deleteMany).not.toHaveBeenCalled();
+  });
+  it("requires authentication", async () => {
+    getServerSession.mockResolvedValue(null); expect((await remove({ endpoint: "https://push.example/one" })).status).toBe(401); expect(deleteMany).not.toHaveBeenCalled();
+  });
+  it.each([0, 1])("scopes deletion to the current user with %i matching rows", async count => {
+    deleteMany.mockResolvedValue({ count });
+    expect((await remove({ endpoint: "https://push.example/one", userId: "someone-else" })).status).toBe(204);
+    expect(deleteMany).toHaveBeenCalledExactlyOnceWith({ where: { endpoint: "https://push.example/one", userId: "staff-1" } });
   });
 });

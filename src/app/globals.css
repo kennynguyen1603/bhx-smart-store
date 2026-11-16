@@ -306,3 +306,5 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .admin-task-table details { max-width: 340px; margin-top: 8px; white-space: normal; overflow-wrap: anywhere; }
 .admin-task-table summary { cursor: pointer; color: var(--green-700); padding: 8px 0; }
 .admin-task-table details p { margin: 8px 0; }
+
+.notification-read-one { flex-shrink: 0; margin-left: auto; }
