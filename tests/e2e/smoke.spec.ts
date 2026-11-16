@@ -725,3 +725,62 @@ test.describe("Admin core forms", () => {
     expect(writeCount).toBe(1); expect(nativeDialogs).toEqual([]);
   });
 });
+
+async function signInAdmin(page: Page) {
+  await page.goto("/login?callbackUrl=/admin");
+  await page.getByRole("button", { name: "Admin", exact: true }).click();
+  await page.locator('input[type="password"]').fill("Demo@123");
+  await page.getByRole("button", { name: /Đăng nhập/i }).click();
+  await expect(page).toHaveURL(/\/admin$/);
+}
+
+test("Admin reference forms preserve IDs, every ESL, and multiple memberships/default", async ({ page }) => {
+  const { referenceOverview, otherStore } = await import("../fixtures/admin-reference");
+  const native: string[] = [];
+  page.on("dialog", async dialog => { native.push(dialog.type()); await dialog.dismiss(); });
+  await page.route("**/api/admin/overview**", route => route.fulfill({ json: referenceOverview }));
+  const writes: { url: string; body: Record<string, unknown> }[] = [];
+  await page.route(/\/api\/admin\/(shelves|esls|users)\//, async route => { writes.push({ url: route.request().url(), body: route.request().postDataJSON() }); await route.fulfill({ json: { id: "saved" } }); });
+  await signInAdmin(page);
+  await page.getByRole("button", { name: "Sơ đồ & ESL", exact: true }).click();
+  await expect(page.getByText("ESL-ONE", { exact: true })).toBeVisible(); await expect(page.getByText("ESL-TWO", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sửa kệ K-02", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Mã kệ", { exact: true })).toHaveAttribute("readonly", "");
+  await expect(dialog.getByLabel("Khu vực", { exact: true })).toContainText("Khu thứ hai");
+  await dialog.getByRole("button", { name: "Lưu", exact: true }).click(); await expect(dialog).toHaveCount(0);
+  expect(writes[0].body).toEqual({ label: "Kệ thứ hai", zoneId: "zone-second", x: 3, y: 2, width: 2, height: 3 });
+  await page.getByRole("button", { name: "Sửa ESL ESL-TWO", exact: true }).click();
+  await expect(dialog.getByLabel("Sản phẩm", { exact: true })).toContainText("Sản phẩm thứ hai");
+  await dialog.getByRole("button", { name: "Lưu", exact: true }).click(); await expect(dialog).toHaveCount(0);
+  expect(writes[1].body).toEqual({ shelfId: "shelf-second", productId: "product-second", ledOn: true });
+  await page.getByRole("button", { name: "Người dùng", exact: true }).click();
+  await page.locator("tr").filter({ hasText: "hai@example.com" }).getByRole("button", { name: "Sửa", exact: true }).click();
+  await expect(dialog.getByLabel("Email", { exact: true })).toHaveAttribute("readonly", "");
+  await expect(dialog.getByLabel("Cửa hàng mặc định", { exact: true })).toContainText(otherStore.name);
+  await dialog.getByRole("button", { name: "Lưu", exact: true }).click(); await expect(dialog).toHaveCount(0);
+  expect(writes[2].body).toEqual({ name: "Người dùng hai", role: "MANAGER", active: false, storeIds: [otherStore.id, "store"] });
+  expect(native).toEqual([]);
+});
+
+test("Admin destructive actions cancel without requests and confirm once with pending protection", async ({ page }) => {
+  const { referenceOverview } = await import("../fixtures/admin-reference");
+  const native: string[] = [];
+  page.on("dialog", async dialog => { native.push(dialog.type()); await dialog.dismiss(); });
+  await page.route("**/api/admin/overview**", route => route.fulfill({ json: referenceOverview }));
+  let release!: () => void;
+  const gate = new Promise<void>(done => { release = done; }); let writes = 0;
+  await page.route("**/api/admin/stores/store", async route => { expect(route.request().method()).toBe("DELETE"); writes++; await gate; await route.fulfill({ status: 204 }); });
+  await signInAdmin(page);
+  const trigger = page.getByRole("button", { name: "Vô hiệu hoá", exact: true }); await trigger.click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog.getByRole("heading")).toHaveText("Vô hiệu hoá cửa hàng");
+  await expect(dialog).toContainText("BHX cửa hàng hai"); await expect(dialog).toContainText("Cửa hàng sẽ ngừng hoạt động");
+  await dialog.getByRole("button", { name: "Hủy", exact: true }).click(); await expect(dialog).toHaveCount(0); expect(writes).toBe(0);
+  await trigger.click();
+  await dialog.getByRole("button", { name: "Vô hiệu hoá", exact: true }).evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click(); });
+  await expect.poll(() => writes).toBe(1); await expect(dialog.getByRole("button", { name: "Hủy", exact: true })).toBeDisabled(); await expect(dialog.getByRole("button", { name: "Đang xử lý…" })).toBeDisabled();
+  await page.keyboard.press("Escape"); await expect(dialog).toBeVisible();
+  await page.mouse.click(5, 5); await expect(dialog).toBeVisible();
+  release(); await expect(dialog).toHaveCount(0); expect(writes).toBe(1); expect(native).toEqual([]); await expect(trigger).toBeFocused();
+});

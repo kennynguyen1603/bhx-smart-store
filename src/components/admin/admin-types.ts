@@ -17,6 +17,12 @@ type ImmutableFields = {
   store: { code: string };
   product: { sku: string; barcode: string };
   supplier: { code: string };
+  lot: { storeId: string; productId: string; supplierId: string; batchCode: string; receivedAt: string };
+  zone: { storeId: string };
+  shelf: { storeId: string; code: string };
+  esl: { storeId: string; code: string };
+  "fefo-rule": { storeId: string };
+  user: { email: string };
 };
 export type AdminEntityKind = keyof Forms | "inventory";
 export type AdminDialogDescriptor = {
@@ -26,7 +32,7 @@ export type AdminDialogDescriptor = {
 }[keyof Forms] | { kind: "inventory"; mode: "edit"; id: string; defaultValues: schemas.InventoryValues };
 
 export type AdminConfirmDescriptor = {
-  kind: AdminEntityKind;
+  kind: Exclude<AdminEntityKind, "inventory">;
   id: string;
   action: "hide" | "deactivate" | "close" | "detach" | "delete" | "lock";
   title: string;

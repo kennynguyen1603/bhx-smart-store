@@ -76,3 +76,10 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .ui-toaster{font-family:inherit}
 .ui-toaster [data-close-button]{flex-shrink:0;min-width:44px;min-height:44px}
 @media(max-width:760px){.ui-dialog-content,.ui-alert-dialog-content{width:calc(100% - 16px);max-height:calc(100dvh - 16px);padding:20px 16px}.ui-dialog-footer{display:grid;grid-template-columns:1fr 1fr}.ui-dialog-title{font-size:20px}}
+
+/* Admin reference forms and complete shelf/ESL controls. */
+.admin-dialog-content .admin-membership { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.admin-dialog-content .admin-membership label { flex: 1; padding-block: 10px; overflow-wrap: anywhere; }
+.admin-shelf-row { border-bottom: 1px solid var(--line); padding-block: 12px; min-width: 0; }
+.admin-esl-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; }
+.admin-esl-row > span { min-width: 0; overflow-wrap: anywhere; }

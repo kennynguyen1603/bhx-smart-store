@@ -34,10 +34,10 @@ export function CoreForm<Input extends FieldValues, Output extends FieldValues>(
   }}>{children}</AdminEntityDialog></Form>;
 }
 
-export function CoreInput({ name, label, numeric = false }: { name: string; label: string; numeric?: boolean }) {
+export function CoreInput({ name, label, numeric = false, type = "text" }: { name: string; label: string; numeric?: boolean; type?: "text" | "password" }) {
   const { control } = useFormContext();
   return <FormField control={control} name={name} render={({ field }) => <FormItem>
-    <FormLabel>{label}</FormLabel><FormControl><Input {...field} type={numeric ? "number" : "text"} step={numeric ? 1 : undefined}
+    <FormLabel>{label}</FormLabel><FormControl><Input {...field} type={numeric ? "number" : type} step={numeric ? 1 : undefined}
       value={Number.isNaN(field.value) ? "" : field.value ?? ""}
       onChange={(event) => field.onChange(numeric ? event.target.valueAsNumber : event.target.value)} /></FormControl><FormMessage />
   </FormItem>} />;
