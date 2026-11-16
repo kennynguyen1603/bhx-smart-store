@@ -4,6 +4,7 @@ import { ApiError, apiErrorResponse, requireUser } from "@/lib/api-auth";
 import { inventoryAdminBaseSchema, inventoryAdminSchema, productAdminSchema } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
 import { normalizeSearch } from "@/lib/normalize";
+import { validateShelfPlacement } from "@/lib/shelf-layout";
 import { z } from "zod";
 
 export async function PUT(request: Request, context: { params: Promise<{ resource: string; id: string }> }) {
@@ -59,13 +60,20 @@ export async function PUT(request: Request, context: { params: Promise<{ resourc
         return Response.json(await prisma.zone.update({ where: { id }, data }));
       }
       case "shelves": {
-        const data = z.object({ label: z.string().min(2).optional(), zoneId: z.string().nullable().optional(), x: z.number().int().nonnegative().optional(), y: z.number().int().nonnegative().optional(), width: z.number().int().positive().optional(), height: z.number().int().positive().optional() }).parse(raw);
+        const data = z.object({ label: z.string().min(2).optional(), zoneId: z.string().nullable().optional(), x: z.number().int().optional(), y: z.number().int().optional(), width: z.number().int().positive().optional(), height: z.number().int().positive().optional() }).parse(raw);
         return Response.json(await prisma.$transaction(async (tx) => {
           const shelf = await tx.shelf.findUniqueOrThrow({ where: { id } });
           if (user.role !== Role.ADMIN && !user.storeIds.includes(shelf.storeId)) throw new ApiError(403, "Không có quyền tại cửa hàng", "STORE_FORBIDDEN");
           if (data.zoneId) {
             const zone = await tx.zone.findFirst({ where: { id: data.zoneId, storeId: shelf.storeId }, select: { id: true } });
             if (!zone) throw new ApiError(400, "Khu vực phải thuộc cùng cửa hàng với kệ.", "CROSS_STORE_REFERENCE");
+          }
+          const store = await tx.store.findUniqueOrThrow({ where: { id: shelf.storeId }, select: { mapWidth: true, mapHeight: true } });
+          const siblings = await tx.shelf.findMany({ where: { storeId: shelf.storeId }, select: { id: true, x: true, y: true, width: true, height: true } });
+          const validation = validateShelfPlacement({ ...shelf, ...data }, siblings, { width: store.mapWidth, height: store.mapHeight });
+          if (!validation.valid) {
+            if (validation.reason === "out-of-bounds") throw new ApiError(400, "Kệ phải nằm hoàn toàn trong sơ đồ cửa hàng.", "SHELF_OUT_OF_BOUNDS");
+            throw new ApiError(409, "Vị trí này đã có kệ khác.", "SHELF_POSITION_OCCUPIED");
           }
           return tx.shelf.update({ where: { id }, data });
         }));

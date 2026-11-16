@@ -105,6 +105,18 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .notification-row-heading span,.notification-row time { color: var(--muted); font-size: 12px; }
 .notification-row p { margin: 8px 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .notification-empty { display: grid; justify-items: center; gap: 10px; padding: 24px 12px; text-align: center; font-size: 14px; }
+
+/* Shelf placement uses the same unpadded rectangle for hit testing and display. */
+.admin-map-editor { min-width: 0; }
+.admin-map-instructions,.admin-map-status,.admin-map-error { font-size: 14px; line-height: 1.5; }
+.admin-placement-grid { gap: 0; padding: 0; overflow: hidden; }
+.admin-placement-grid .map-cell { min-width: 0; padding: 0; background: transparent; }
+.admin-shelf-handle { position: absolute; z-index: 2; display: grid; place-content: center; min-width: 0; padding: 3px; color: var(--green-950); background: white; border: 2px solid var(--green-100); border-radius: 6px; font-size: 12px; font-weight: 900; cursor: grab; touch-action: none; user-select: none; overflow-wrap: anywhere; box-shadow: 0 3px 9px rgba(0,0,0,.08); }
+.admin-shelf-handle[aria-pressed="true"] { z-index: 3; border-color: var(--green-700); background: var(--green-100); cursor: grabbing; }
+.admin-shelf-handle:disabled { cursor: default; }
+.admin-shelf-handle:focus-visible,.admin-placement-grid .map-cell:focus-visible { outline: 3px solid var(--green-700); outline-offset: -3px; }
+.admin-map-status { min-height: 21px; color: var(--green-700); }
+.admin-map-error { color: #a12828; }
 .notification-empty p { margin: 0; color: var(--muted); line-height: 1.5; }
 .notification-button:focus-visible { outline: 3px solid var(--green-600); outline-offset: 3px; }
 @media(max-width:760px) {
