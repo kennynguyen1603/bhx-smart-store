@@ -69,9 +69,10 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .ui-select-viewport{padding:4px}.ui-select-item{position:relative;display:flex;align-items:center;min-height:44px;padding:8px 12px 8px 32px;border-radius:6px;font-size:14px;cursor:default;outline:none}
 .ui-select-item[data-highlighted]{background:var(--green-50)}.ui-select-item[data-disabled]{opacity:.5;pointer-events:none}
 .ui-select-label{padding:8px 12px;font-size:13px;font-weight:700}.ui-select-indicator{position:absolute;left:8px;display:flex}
-.ui-select-scroll{display:flex;align-items:center;justify-content:center;min-height:24px}.ui-select-separator{height:1px;margin:4px;background:var(--line)}
+.ui-select-scroll{display:flex;align-items:center;justify-content:center;flex-shrink:0;min-width:44px;min-height:44px}.ui-select-separator{height:1px;margin:4px;background:var(--line)}
 .ui-checkbox{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:44px;height:44px;padding:10px;color:var(--green-700);background:white;border:1px solid var(--line);border-radius:8px;cursor:pointer}
 .ui-checkbox[data-state=checked],.ui-checkbox[data-state=indeterminate]{background:var(--green-50);border-color:var(--green-700)}.ui-checkbox-indicator{display:flex}
 .ui-spinner{flex-shrink:0;animation:spin 1s linear infinite}
 .ui-toaster{font-family:inherit}
+.ui-toaster [data-close-button]{flex-shrink:0;min-width:44px;min-height:44px}
 @media(max-width:760px){.ui-dialog-content,.ui-alert-dialog-content{width:calc(100% - 16px);max-height:calc(100dvh - 16px);padding:20px 16px}.ui-dialog-footer{display:grid;grid-template-columns:1fr 1fr}.ui-dialog-title{font-size:20px}}

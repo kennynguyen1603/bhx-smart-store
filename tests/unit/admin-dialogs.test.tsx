@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminEntityDialog } from "@/components/admin/admin-entity-dialog";
 import { AdminConfirmDialog } from "@/components/admin/admin-confirm-dialog";
+import type { AdminDialogProps } from "@/components/admin/admin-types";
 import { Toaster } from "@/components/ui/sonner";
 
 let root: Root;
@@ -38,7 +39,7 @@ async function dismiss() {
 
 // Removing pending guards would permit duplicate writes or dismissal before the write finishes.
 describe.each(["entity", "confirm"] as const)("Admin %s dialog", (kind) => {
-  async function renderDialog(props: { pending?: boolean; onSubmit?: () => Promise<boolean>; onOpenChange?: (open: boolean) => void } = {}) {
+  async function renderDialog(props: { pending?: boolean; onSubmit?: AdminDialogProps["onSubmit"]; onOpenChange?: (open: boolean) => void } = {}) {
     const shared = { open: true, title: "Sửa cửa hàng", description: "Thông tin cửa hàng", openerRef: { current: opener }, fallbackFocusRef: { current: fallback }, onOpenChange: vi.fn(), onSubmit: async () => true, ...props };
     await act(async () => root.render(<><Toaster />{kind === "entity"
       ? <AdminEntityDialog {...shared}><input aria-label="Tên" defaultValue="BHX Quận 2" /></AdminEntityDialog>
@@ -75,12 +76,38 @@ describe.each(["entity", "confirm"] as const)("Admin %s dialog", (kind) => {
     const onSubmit = vi.fn(async () => { if (failure === "throw") throw new Error("Máy chủ đang bận"); return false; });
     const props = await renderDialog({ onSubmit });
     await act(async () => button(kind === "entity" ? "Lưu" : "Xóa").click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
     expect(props.onOpenChange).not.toHaveBeenCalled();
     expect(button("Hủy").disabled).toBe(false);
     if (kind === "entity") expect(document.querySelector<HTMLInputElement>("input")?.value).toBe("BHX Quận 2");
     if (failure === "throw") expect(document.body.textContent).toContain("Máy chủ đang bận");
     await act(async () => button(kind === "entity" ? "Lưu" : "Xóa").click());
     expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+  it.each(["Failed to fetch", "fetch failed", "Load failed", "NetworkError when attempting to fetch resource."])("localizes rejected fetch (%s), retains values, and allows retry", async (message) => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError(message)).mockResolvedValueOnce(new Response("{}")));
+    const props = await renderDialog({ onSubmit: async () => { await fetch("/api/admin/stores"); return true; } });
+    if (kind === "entity") await act(async () => {
+      const input = document.querySelector<HTMLInputElement>("input")!;
+      input.value = "BHX vừa sửa";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button(kind === "entity" ? "Lưu" : "Xóa").click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(document.querySelector("[data-sonner-toast]")?.textContent).toContain("Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại.");
+    expect(document.querySelector("[data-sonner-toast]")?.textContent).not.toContain(message);
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+    expect(button("Hủy").disabled).toBe(false);
+    if (kind === "entity") expect(document.querySelector<HTMLInputElement>("input")?.value).toBe("BHX vừa sửa");
+    await act(async () => button(kind === "entity" ? "Lưu" : "Xóa").click());
+    expect(props.onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+  });
+  it("preserves an explicit server error message", async () => {
+    const props = await renderDialog({ onSubmit: async () => ({ ok: false, error: "SKU already exists" }) });
+    await act(async () => button(kind === "entity" ? "Lưu" : "Xóa").click());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    expect(document.querySelector("[data-sonner-toast]")?.textContent).toContain("SKU already exists");
+    expect(props.onOpenChange).not.toHaveBeenCalled();
   });
   it("dismisses an idle dialog with Escape", async () => {
     const props = await renderDialog();

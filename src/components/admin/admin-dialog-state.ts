@@ -27,7 +27,10 @@ export function useAdminDialogState({ pending = false, onSubmit, onOpenChange, o
       if (result === true || (typeof result === "object" && result.ok)) onOpenChange(false);
       else toast.error(typeof result === "object" && !result.ok && result.error ? result.error : "Không thể lưu thay đổi. Vui lòng thử lại.");
     } catch (error) {
-      if (mounted.current) toast.error(error instanceof Error ? error.message : "Có lỗi xảy ra. Vui lòng thử lại.");
+      const transportFailure = error instanceof TypeError && /failed to fetch|fetch failed|load failed|networkerror|network request failed/i.test(error.message);
+      if (mounted.current) toast.error(transportFailure
+        ? "Không thể kết nối đến máy chủ. Vui lòng kiểm tra mạng và thử lại."
+        : error instanceof Error ? error.message : "Có lỗi xảy ra. Vui lòng thử lại.");
     } finally {
       locked.current = false;
       if (mounted.current) setSubmitting(false);
@@ -40,8 +43,12 @@ export function useAdminDialogState({ pending = false, onSubmit, onOpenChange, o
     event.preventDefault();
     const opener = openerRef?.current ?? capturedOpener.current;
     const fallback = fallbackFocusRef?.current ?? document.querySelector<HTMLElement>("[data-admin-dialog-fallback]");
-    if (opener?.isConnected && !opener.matches(":disabled")) opener.focus();
-    else if (fallback?.isConnected) fallback.focus();
+    // Body is also active when nothing can take focus, so it cannot prove restoration.
+    if (opener?.isConnected && opener !== document.body && !opener.matches(":disabled")) {
+      opener.focus();
+      if (document.activeElement === opener) return;
+    }
+    if (fallback?.isConnected) fallback.focus();
   }
   function preventPendingDismiss(event: Event) {
     if (pending || locked.current) event.preventDefault();
