@@ -13,8 +13,9 @@ export type AdminMapStore = {
 type Props = { store: AdminMapStore; canEdit: boolean; onMove(shelfId: string, x: number, y: number): Promise<ApiMutationResult> };
 type Position = { x: number; y: number };
 type Placement = Position & { source: AdminMapStore["shelves"][number] };
-type Gesture = { shelfId: string; pointerId: number; start: Position; dragging: boolean; handle: HTMLButtonElement };
+type Gesture = { shelfId: string; pointerId: number; start: Position; grabOffset: Position; dragging: boolean; handle: HTMLButtonElement };
 const DRAG_THRESHOLD_PX = 6;
+const MIN_TARGET_SIZE_PX = 44;
 
 export function AdminMapEditor(props: Props) {
   // A different store owns a different gesture and optimistic-update lifecycle.
@@ -52,10 +53,15 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
     select(null);
   }
 
-  function target(clientX: number, clientY: number): Position | null {
+  function mapPosition(clientX: number, clientY: number): Position | null {
     const rect = mapRef.current?.getBoundingClientRect();
     if (!rect || !rect.width || !rect.height) return null;
-    return { x: Math.floor((clientX - rect.left) / rect.width * store.mapWidth), y: Math.floor((clientY - rect.top) / rect.height * store.mapHeight) };
+    return { x: (clientX - rect.left) / rect.width * store.mapWidth, y: (clientY - rect.top) / rect.height * store.mapHeight };
+  }
+
+  function target(clientX: number, clientY: number, grabOffset: Position): Position | null {
+    const position = mapPosition(clientX, clientY);
+    return position ? { x: Math.round(position.x - grabOffset.x), y: Math.round(position.y - grabOffset.y) } : null;
   }
 
   async function move(shelfId: string, position: Position) {
@@ -93,9 +99,12 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
 
   function pointerDown(event: PointerEvent<HTMLButtonElement>, shelfId: string) {
     if (!canEdit || pendingLock.current || gesture.current || event.button !== 0) return;
+    const position = mapPosition(event.clientX, event.clientY);
+    const shelf = shelves.find((item) => item.id === shelfId);
+    if (!position || !shelf) return;
     suppressClick.current = false;
     event.currentTarget.setPointerCapture(event.pointerId);
-    gesture.current = { shelfId, pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, dragging: false, handle: event.currentTarget };
+    gesture.current = { shelfId, pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, grabOffset: { x: position.x - shelf.x, y: position.y - shelf.y }, dragging: false, handle: event.currentTarget };
     setError("");
   }
 
@@ -105,7 +114,7 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
     if (!active.dragging && Math.hypot(event.clientX - active.start.x, event.clientY - active.start.y) < DRAG_THRESHOLD_PX) return;
     active.dragging = true;
     select(active.shelfId);
-    const position = target(event.clientX, event.clientY);
+    const position = target(event.clientX, event.clientY, active.grabOffset);
     if (position) setPreview({ ...position, shelfId: active.shelfId });
   }
 
@@ -116,7 +125,7 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
     if (active.handle.hasPointerCapture(active.pointerId)) active.handle.releasePointerCapture(active.pointerId);
     if (!active.dragging) return;
     suppressClick.current = true;
-    const position = target(event.clientX, event.clientY);
+    const position = target(event.clientX, event.clientY, active.grabOffset);
     if (position) void move(active.shelfId, position);
     else cancelGesture();
   }
@@ -130,9 +139,10 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
   return <div className="admin-map-editor" onKeyDown={(event) => {
     if (event.key === "Escape") { suppressClick.current = !!gesture.current?.dragging; cancelGesture(); setError(""); }
   }}>
-    <p id={instructionsId} className="admin-map-instructions">{canEdit ? "Kéo kệ đến ô mới hoặc chạm kệ rồi chạm ô đích. Chạm lại kệ hoặc nhấn Escape để huỷ." : "Sơ đồ chỉ xem. Chỉ Admin được di chuyển kệ."}</p>
+    <p id={instructionsId} className="admin-map-instructions">{canEdit ? "Kéo kệ đến ô mới hoặc chạm kệ rồi chạm ô đích. Chạm lại kệ hoặc nhấn Escape để huỷ." : "Sơ đồ chỉ xem. Chỉ Admin được di chuyển kệ."} Vuốt ngang để xem toàn bộ sơ đồ.</p>
+    <div className="admin-map-scroll" tabIndex={0} role="region" aria-label="Sơ đồ kệ có thể cuộn ngang" aria-describedby={instructionsId}>
     <div ref={mapRef} className="map-grid admin-placement-grid" role="group" aria-label="Sơ đồ vị trí kệ" aria-describedby={instructionsId} aria-busy={pending}
-      style={{ gridTemplateColumns: `repeat(${store.mapWidth},minmax(0,1fr))`, gridTemplateRows: `repeat(${store.mapHeight},50px)` }}>
+      style={{ minWidth: store.mapWidth * MIN_TARGET_SIZE_PX, gridTemplateColumns: `repeat(${store.mapWidth},minmax(${MIN_TARGET_SIZE_PX}px,1fr))`, gridTemplateRows: `repeat(${store.mapHeight},50px)` }}>
       {Array.from({ length: store.mapWidth * store.mapHeight }, (_, index) => {
         const x = index % store.mapWidth; const y = Math.floor(index / store.mapWidth);
         return <button type="button" className="map-cell" key={index} aria-label={`Ô ${x + 1}, ${y + 1}`} aria-describedby={instructionsId} disabled={!canEdit || pending}
@@ -149,6 +159,7 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
             setError(""); select(selectedRef.current === shelf.id ? null : shelf.id);
           }}>{shelf.code}<small>{shelf.esls.some((esl) => esl.ledOn) ? " 🔴" : " 🟢"}</small></button>;
       })}
+    </div>
     </div>
     <p role="status" className="admin-map-status">{pending ? "Đang lưu vị trí kệ…" : selected ? "Đã chọn kệ. Chạm ô đích để di chuyển." : ""}</p>
     {error && <p role="alert" className="admin-map-error">{error}</p>}

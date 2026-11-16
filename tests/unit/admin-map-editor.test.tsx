@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,6 +55,54 @@ function deferred() {
 }
 
 describe("AdminMapEditor", () => {
+  it.each([
+    [250, 350, 8], [350, 350, 8], [250, 450, 8], [375, 475, 8],
+    [250, 350, -8], [350, 350, -8], [250, 450, -8], [375, 475, -8],
+  ])("preserves the grab offset from %s,%s with threshold step %s through preview and release", async (x, y, step) => {
+    await render();
+    await pointer("pointerdown", x, y);
+    await pointer("pointermove", x + step, y + step);
+    position("12.5%", `${1 / 6 * 100}%`);
+    expect(onMove).not.toHaveBeenCalled();
+    await pointer("pointermove", x + 100, y + 200);
+    position("25%", "50%");
+    // Release at a different cell from the last preview.
+    await pointer("pointerup", x + 100, y + 300);
+    position("25%", `${4 / 6 * 100}%`);
+    expect(onMove).toHaveBeenCalledExactlyOnceWith("a", 2, 4);
+  });
+  it("uses the scrolled grid rectangle when preserving a multi-cell grab offset", async () => {
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ left: -44, top: 200, width: 528, height: 300, right: 484, bottom: 500, x: -44, y: 200, toJSON: () => ({}) });
+    await render(true, { ...store, mapWidth: 12 });
+    await pointer("pointerdown", 66, 275);
+    await pointer("pointermove", 110, 425);
+    position(`${2 / 12 * 100}%`, `${4 / 6 * 100}%`);
+    await pointer("pointerup", 110, 425);
+    expect(onMove).toHaveBeenCalledExactlyOnceWith("a", 2, 4);
+  });
+  it.each([{ columns: 8, minimum: "352px" }, { columns: 12, minimum: "528px" }])("keeps $columns-column placement targets at least 44px in a scroll container", async ({ columns, minimum }) => {
+    await render(true, { ...store, mapWidth: columns });
+    const stylesheet = document.createElement("style");
+    stylesheet.textContent = readFileSync("src/app/globals.css", "utf8");
+    document.head.append(stylesheet);
+    try {
+      const grid = host.querySelector<HTMLElement>('[aria-label="Sơ đồ vị trí kệ"]')!;
+      const scroller = grid.parentElement!;
+      expect(getComputedStyle(grid).minWidth).toBe(minimum);
+      expect(grid.style.gridTemplateColumns).toBe(`repeat(${columns},minmax(44px,1fr))`);
+      expect(getComputedStyle(scroller).overflowX).toBe("auto");
+      expect(getComputedStyle(scroller).maxWidth).toBe("100%");
+      expect(Number.parseFloat(getComputedStyle(scroller).minWidth)).toBe(0);
+      for (const node of [cell(0, 0), shelf()]) {
+        expect(getComputedStyle(node).minWidth).toBe("44px");
+        expect(getComputedStyle(node).minHeight).toBe("44px");
+      }
+      expect(getComputedStyle(shelf()).touchAction).toBe("none");
+      for (const node of [document.body, host.firstElementChild!, scroller, grid, cell(0, 0)]) {
+        expect(getComputedStyle(node).touchAction).not.toBe("none");
+      }
+    } finally { stylesheet.remove(); }
+  });
   it("captures a touch pointer, previews a snapped rectangle, and persists once on release", async () => {
     await render();
     await pointer("pointerdown", 250, 350);
