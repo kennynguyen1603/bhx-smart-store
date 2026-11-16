@@ -220,6 +220,15 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
   .log-row .badge { align-self: start; }
   .demo-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 24px; max-width: 1160px; margin: 24px auto 0; }
   .demo-links a { display: inline-flex; align-items: center; min-height: 44px; color: var(--green-700); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+  .kiosk-page .category-grid button,.kiosk-page .product-card strong,.kiosk-page .product-location,
+  .kiosk-page .kiosk-intro p,.kiosk-page .kiosk-location strong,.kiosk-page .detail-location-card strong,
+  .scanner-frame span,.scanner-loading strong { font-size: 14px; }
+  .kiosk-page .product-card small,.kiosk-page .availability,.kiosk-page .original-price,
+  .kiosk-page .discount-badge,.kiosk-page .logo small,.kiosk-page .kiosk-location small,
+  .kiosk-page .detail-location-card small,.kiosk-page .detail-location-card em,
+  .kiosk-scanner-hint,.kiosk-session-timer { font-size: 12px; }
+  .kiosk-page .button,.kiosk-page .form-control,.scan-toggle { min-height: 44px; font-size: 14px; }
+  .kiosk-header > button,.kiosk-page .icon-button { min-width: 44px; min-height: 44px; }
 }
 @media screen and (max-width:760px) {
   .experience-grid { grid-template-columns: minmax(0,1fr); }
@@ -240,4 +249,7 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
   .metric { grid-template-columns: minmax(0,1fr); gap: 8px; }
   .metric span { min-width: 0; }
   .modal-actions { flex-wrap: wrap; }
+  .kiosk-header { grid-template-columns: minmax(0,1fr); gap: 12px; padding-block: 16px; }
+  .kiosk-header > button { justify-self: start; }
+  .kiosk-actions,.kiosk-actions .form-control { min-width: 0; }
 }

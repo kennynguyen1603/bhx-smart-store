@@ -130,7 +130,7 @@ export function BarcodeScanner({ onDetected, label = "Bật camera" }: { onDetec
           onPlaying={() => setReady(true)}
         />
         {!active && <div className="scanner-placeholder" style={{ position: "absolute", inset: 0, alignContent: "center" }}><Camera /><strong>Quét nhanh bằng camera</strong><small>Đặt mã ESL hoặc barcode vào giữa khung hình</small></div>}
-        {active && !ready && <div className="scanner-loading" aria-live="polite" style={{ position: "absolute", inset: 0, zIndex: 2, display: "grid", placeItems: "center", alignContent: "center", gap: 10, color: "white", background: "rgba(4,38,24,.82)" }}><LoaderCircle className="spin" /><strong style={{ fontSize: 9 }}>Đang khởi động camera…</strong></div>}
+        {active && !ready && <div className="scanner-loading" aria-live="polite" style={{ position: "absolute", inset: 0, zIndex: 2, display: "grid", placeItems: "center", alignContent: "center", gap: 10, color: "white", background: "rgba(4,38,24,.82)" }}><LoaderCircle className="spin" /><strong>Đang khởi động camera…</strong></div>}
         {active && ready && <div className="scanner-frame" aria-hidden="true" style={{ zIndex: 3 }}><i /><i /><i /><i /><span>ĐƯA MÃ VÀO KHUNG</span></div>}
       </div>
       <button type="button" className={`button scan-toggle ${active ? "" : "primary"}`} onClick={active ? stop : start} disabled={starting}>{active ? <><CameraOff /> Tắt camera</> : <><Camera /> Mở camera</>}</button>
