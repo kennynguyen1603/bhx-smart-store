@@ -5,6 +5,9 @@ export type PushSetupResult =
   | { status: "unsupported" | "denied" | "worker-unavailable" | "backend-unconfigured" | "failed"; message: string };
 
 type PushFailure = Exclude<PushSetupResult, { status: "enabled" }>;
+export type PreparedDevicePush = { registration: ServiceWorkerRegistration; applicationServerKey: Uint8Array<ArrayBuffer> };
+type PushPreparationResult = { status: "ready"; prepared: PreparedDevicePush } | PushFailure;
+let preparationInFlight: Promise<PushPreparationResult> | null = null;
 let inFlight: Promise<PushSetupResult> | null = null;
 
 class PushSetupFailure extends Error {
@@ -38,7 +41,7 @@ function waitForActivation(registration: ServiceWorkerRegistration): Promise<voi
   });
 }
 
-async function attemptSetup(): Promise<PushSetupResult> {
+async function prepareSetup(): Promise<PushPreparationResult> {
   let failure: PushFailure = { status: "failed", message: "Không thể bật thông báo trên thiết bị. Hãy thử lại." };
   try {
     if (typeof navigator === "undefined" || typeof Notification === "undefined" || typeof PushManager === "undefined" || !("serviceWorker" in navigator)) {
@@ -65,16 +68,37 @@ async function attemptSetup(): Promise<PushSetupResult> {
     if (!worker.ok) return failure;
     if (!worker.registration.pushManager) return { status: "unsupported", message: "Trình duyệt này không hỗ trợ Web Push." };
     await waitForActivation(worker.registration);
+    return { status: "ready", prepared: { registration: worker.registration, applicationServerKey } };
+  } catch (error) {
+    return error instanceof PushSetupFailure ? error.result : failure;
+  }
+}
 
-    failure = { status: "failed", message: "Không thể bật thông báo trên thiết bị. Hãy thử lại." };
-    const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+export function prepareDevicePush(): Promise<PushPreparationResult> {
+  if (!preparationInFlight) preparationInFlight = prepareSetup().finally(() => { preparationInFlight = null; });
+  return preparationInFlight;
+}
+
+async function attemptSetup(prepared?: PreparedDevicePush): Promise<PushSetupResult> {
+  let failure: PushFailure = { status: "failed", message: "Không thể bật thông báo trên thiết bị. Hãy thử lại." };
+  try {
+    if (!prepared) {
+      const preparation = await prepareDevicePush();
+      if (preparation.status !== "ready") return preparation;
+      // Preparation may exhaust transient activation. A fresh UI click must supply
+      // its prepared context before a permission prompt can be requested.
+      if (Notification.permission !== "granted") return { status: "failed", message: "Thiết bị đã sẵn sàng. Hãy nhấn cho phép thông báo trên thiết bị." };
+      prepared = preparation.prepared;
+    }
+    // Keep this call before any await when invoked with a prepared context.
+    const permission = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
     if (permission !== "granted") return { status: "denied", message: permission === "denied" ? "Bạn đã từ chối quyền nhận thông báo." : "Bạn chưa cho phép nhận thông báo." };
 
     failure = { status: "failed", message: "Không thể tạo đăng ký Web Push trên trình duyệt này." };
-    const manager = worker.registration.pushManager;
+    const manager = prepared.registration.pushManager;
     const subscriptionTimeout: PushFailure = { status: "failed", message: "Quá thời gian tạo đăng ký Web Push. Hãy thử lại." };
     const existing = await bounded(manager.getSubscription(), 8_000, subscriptionTimeout);
-    const subscription = existing || await bounded(manager.subscribe({ userVisibleOnly: true, applicationServerKey }), 8_000, subscriptionTimeout);
+    const subscription = existing || await bounded(manager.subscribe({ userVisibleOnly: true, applicationServerKey: prepared.applicationServerKey }), 8_000, subscriptionTimeout);
 
     failure = { status: "failed", message: "Không thể lưu đăng ký Web Push. Hãy thử lại." };
     const controller = new AbortController();
@@ -87,7 +111,7 @@ async function attemptSetup(): Promise<PushSetupResult> {
   }
 }
 
-export function setupDevicePush(): Promise<PushSetupResult> {
-  if (!inFlight) inFlight = attemptSetup().finally(() => { inFlight = null; });
+export function setupDevicePush(prepared?: PreparedDevicePush): Promise<PushSetupResult> {
+  if (!inFlight) inFlight = attemptSetup(prepared).finally(() => { inFlight = null; });
   return inFlight;
 }

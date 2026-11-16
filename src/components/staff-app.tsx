@@ -32,15 +32,19 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const [toast, setToast] = useState<{ message: string; error?: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const readPendingRef = useRef<{ storeId: string; previous: StaffNotification[]; readAt: string } | null>(null);
+  const readVersionsRef = useRef(new Map<string, number>());
   const managerOversight = user.role === "MANAGER";
 
   const notify = useCallback((message: string, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast(null), 4200); }, []);
   const load = useCallback(async () => {
     if (!storeId) return;
+    const readVersion = readVersionsRef.current.get(storeId) || 0;
+    const isCurrentReadVersion = () => readVersion === (readVersionsRef.current.get(storeId) || 0);
     try {
       const response = await fetch(`/api/staff/tasks?storeId=${storeId}`, { cache: "no-store" });
       if (!response.ok) throw new Error();
       const payload = await response.json() as Payload;
+      if (!isCurrentReadVersion()) return;
       const pendingRead = readPendingRef.current;
       const pendingIds = new Set(pendingRead?.previous.filter((item) => !item.readAt).map((item) => item.id));
       setData(pendingRead?.storeId === storeId ? {
@@ -50,6 +54,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
       await cacheStaffPayload(storeId, payload); setOnline(true);
     } catch {
       const cached = await getCachedStaffPayload<Payload>(storeId);
+      if (!isCurrentReadVersion()) return;
       if (cached) { setData(cached); setOnline(false); }
       else notify("Không thể tải nhiệm vụ. Kiểm tra kết nối mạng.", true);
     } finally { setLoading(false); }
@@ -105,6 +110,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     if (!data || data.selectedStoreId !== storeId || readPendingRef.current) return false;
     const previous = data.notifications;
     const readAt = new Date().toISOString();
+    readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
     readPendingRef.current = { storeId, previous, readAt };
     setData((current) => current?.selectedStoreId === storeId ? { ...current, notifications: current.notifications.map((item) => item.readAt ? item : { ...item, readAt }) } : current);
     try {
@@ -120,7 +126,11 @@ export function StaffApp({ user }: { user: Session["user"] }) {
         notifications: current.notifications.map((item) => item.readAt === readAt ? previousById.get(item.id) || item : item),
       } : current);
       return false;
-    } finally { readPendingRef.current = null; }
+    } finally {
+      // A response started before completion may still contain pre-PATCH unread rows.
+      readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
+      readPendingRef.current = null;
+    }
   }
 
   async function openTask(task: Task) { setSelected(task); setScanned(false); setScanCode(task.shelf.esls[0]?.code || ""); setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1)); if(!managerOversight && ["OPEN","BLOCKED"].includes(task.status)) await mutation(`/api/staff/tasks/${task.id}/start`,{clientMutationId:uuid()},"Đã bắt đầu nhiệm vụ."); }

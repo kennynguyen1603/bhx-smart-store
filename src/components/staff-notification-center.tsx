@@ -4,7 +4,7 @@ import { Bell, LoaderCircle } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { setupDevicePush, type PushSetupResult } from "@/lib/push-client";
+import { prepareDevicePush, setupDevicePush, type PreparedDevicePush, type PushSetupResult } from "@/lib/push-client";
 
 export type StaffNotification = {
   id: string;
@@ -23,9 +23,11 @@ export function StaffNotificationCenter({ notifications, storeId, onReadAll }: {
 }) {
   const [pushResult, setPushResult] = useState<PushSetupResult | null>(null);
   const [pushPending, setPushPending] = useState(false);
+  const [permissionReady, setPermissionReady] = useState(false);
   const [readPending, setReadPending] = useState(false);
   const [readMessage, setReadMessage] = useState("");
   const pushGuard = useRef(false);
+  const preparedPushRef = useRef<PreparedDevicePush | null>(null);
   const readGuard = useRef(false);
   const unread = notifications.filter((notification) => !notification.readAt).length;
 
@@ -33,7 +35,24 @@ export function StaffNotificationCenter({ notifications, storeId, onReadAll }: {
     if (pushGuard.current) return;
     pushGuard.current = true;
     setPushPending(true);
-    try { setPushResult(await setupDevicePush()); }
+    try {
+      if (preparedPushRef.current) {
+        const prepared = preparedPushRef.current;
+        preparedPushRef.current = null;
+        setPermissionReady(false);
+        // setupDevicePush requests permission synchronously from this fresh click.
+        setPushResult(await setupDevicePush(prepared));
+      } else {
+        const preparation = await prepareDevicePush();
+        if (preparation.status !== "ready") { setPushResult(preparation); return; }
+        if (Notification.permission === "granted") setPushResult(await setupDevicePush(preparation.prepared));
+        else {
+          preparedPushRef.current = preparation.prepared;
+          setPermissionReady(true);
+          setPushResult(null);
+        }
+      }
+    }
     finally { pushGuard.current = false; setPushPending(false); }
   }
 
@@ -62,11 +81,11 @@ export function StaffNotificationCenter({ notifications, storeId, onReadAll }: {
       </DialogHeader>
       <section className="notification-device" aria-label="Thông báo trên thiết bị">
         <p role="status" className={`notification-status ${pushResult && pushResult.status !== "enabled" ? "warning" : ""}`}>
-          {pushPending ? "Đang thiết lập thông báo trên thiết bị…" : pushResult?.status === "enabled" ? "Đã bật Web Push cho thiết bị này." : pushResult?.message || "Bật để nhận thông báo khi không mở ứng dụng."}
+          {pushPending ? "Đang thiết lập thông báo trên thiết bị…" : permissionReady ? "Thiết bị đã sẵn sàng. Nhấn cho phép để trình duyệt hỏi quyền nhận thông báo." : pushResult?.status === "enabled" ? "Đã bật Web Push cho thiết bị này." : pushResult?.message || "Bật để nhận thông báo khi không mở ứng dụng."}
         </p>
         <Button variant="outline" disabled={pushPending || pushResult?.status === "enabled"} onClick={() => void enablePush()}>
           {pushPending && <LoaderCircle className="spin" size={16} aria-hidden="true" />}
-          {pushPending ? "Đang bật thông báo" : "Bật thông báo trên thiết bị"}
+          {pushPending ? "Đang bật thông báo" : permissionReady ? "Cho phép thông báo trên thiết bị" : "Bật thông báo trên thiết bị"}
         </Button>
       </section>
       <div className="notification-read-action">

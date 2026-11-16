@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "next-auth";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { StaffApp } from "@/components/staff-app";
-import { setupDevicePush } from "@/lib/push-client";
+import { prepareDevicePush, setupDevicePush } from "@/lib/push-client";
 
 vi.mock("next-auth/react", () => ({ signOut: vi.fn() }));
 vi.mock("@/components/barcode-scanner", () => ({ BarcodeScanner: () => null }));
@@ -71,7 +71,11 @@ function bell() { return container.querySelector<HTMLButtonElement>(".notificati
 function pushCalls(method: string) { return fetchMock.mock.calls.filter(([input, init]) => String(input) === "/api/push/subscriptions" && (init?.method || "GET") === method); }
 async function click(target: HTMLElement) { await act(async () => target.click()); }
 async function openCenter() { await click(bell()); }
-async function enable() { await openCenter(); await click(button("Bật thông báo trên thiết bị")); }
+async function enable() {
+  await openCenter(); await click(button("Bật thông báo trên thiết bị"));
+  const confirm = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === "Cho phép thông báo trên thiết bị");
+  if (confirm) await click(confirm);
+}
 async function render(asUser = user) {
   await act(async () => { root.render(createElement(StaffApp, { user: asUser })); await new Promise((done) => setTimeout(done, 10)); });
 }
@@ -145,6 +149,36 @@ describe("Staff notification center", () => {
     await act(async () => finish(new Response(null, { status: 503 })));
     expect(bell().textContent).toBe("2"); expect(document.body.textContent).toContain("Thông báo mới");
   });
+  it.each(["before", "during"])("ignores an unread GET started %s PATCH that resolves after successful read-all", async (timing) => {
+    let finishGet!: (response: Response) => void;
+    let finishRead!: (response: Response) => void;
+    const oldPayload = structuredClone(payload);
+    const deferredGet = new Promise<Response>((resolve) => { finishGet = resolve; });
+    readRequest = () => new Promise((resolve) => { finishRead = resolve; });
+    await render(); await openCenter();
+    const reload = container.querySelector<HTMLButtonElement>('[aria-label="Tải lại"]')!;
+    async function startOldGet() {
+      fetchMock.mockImplementationOnce(async () => deferredGet);
+      await click(reload);
+    }
+    if (timing === "before") await startOldGet();
+    await click(button("Đánh dấu tất cả đã đọc"));
+    if (timing === "during") await startOldGet();
+    await act(async () => finishRead(Response.json({ updated: 1, readAt: "2026-11-16T03:00:00.000Z" })));
+    expect(bell().textContent).toBe("");
+    await act(async () => finishGet(Response.json(oldPayload)));
+    expect(bell().textContent).toBe("");
+    expect(button("Đánh dấu tất cả đã đọc").disabled).toBe(true);
+    expect(document.querySelectorAll(".notification-row.unread")).toHaveLength(0);
+    // A later, current refresh must still deliver new unread notifications.
+    payload.notifications = [
+      { ...notifications[0], readAt: "2026-11-16T03:00:00.000Z" }, notifications[1],
+      { ...notifications[0], id: "notification-after-read", title: "Thông báo sau khi đã đọc" },
+    ];
+    await click(reload);
+    expect(bell().textContent).toBe("1");
+    expect(document.body.textContent).toContain("Thông báo sau khi đã đọc");
+  });
   it("does not restore one store's notifications into another store after a failed read", async () => {
     let finish!: (response: Response) => void;
     readRequest = () => new Promise((resolve) => { finish = resolve; });
@@ -164,6 +198,59 @@ describe("Staff notification center", () => {
 });
 
 describe("deliberate device push setup", () => {
+  it("never prompts after asynchronous preparation without a prepared permission click", async () => {
+    const apis = installPushApis("default");
+    const result = await setupDevicePush();
+    expect(apis.requestPermission).not.toHaveBeenCalled();
+    expect(apis.subscribe).not.toHaveBeenCalled();
+    expect(pushCalls("POST")).toHaveLength(0);
+    expect(result.status).toBe("failed");
+  });
+  it.each(["backend readiness", "worker activation"])("requires a fresh permission click after slow %s", async (stage) => {
+    const apis = installPushApis("default");
+    let userActivation = false;
+    let permissionWasSynchronous = false;
+    apis.requestPermission.mockImplementation(async () => {
+      permissionWasSynchronous = userActivation;
+      return userActivation ? "granted" : "denied";
+    });
+    let finishReadiness!: (response: Response) => void;
+    const installing = Object.assign(new EventTarget(), { state: "installing" as ServiceWorkerState });
+    if (stage === "backend readiness") {
+      pushRequest = async (init) => init?.method === "POST" ? new Response(null, { status: 201 }) : new Promise((resolve) => { finishReadiness = resolve; });
+    } else {
+      apis.worker.getRegistration.mockResolvedValueOnce(undefined);
+      apis.worker.register.mockResolvedValueOnce({ active: null, installing, waiting: null, pushManager: { subscribe: apis.subscribe, getSubscription: apis.getSubscription } });
+    }
+    await render(); await openCenter();
+    await act(async () => {
+      userActivation = true;
+      button("Bật thông báo trên thiết bị").click();
+      userActivation = false; // The gesture expires while preparation is pending.
+    });
+    expect(apis.requestPermission).not.toHaveBeenCalled();
+    expect(pushCalls("POST")).toHaveLength(0);
+    await act(async () => {
+      if (stage === "backend readiness") finishReadiness(Response.json({ configured: true, publicKey: "AQIDBA" }));
+      else { installing.state = "activated"; installing.dispatchEvent(new Event("statechange")); }
+    });
+    expect(apis.requestPermission).not.toHaveBeenCalled();
+    expect(apis.subscribe).not.toHaveBeenCalled();
+    const confirm = button("Cho phép thông báo trên thiết bị");
+    expect(confirm.disabled).toBe(false);
+    await act(async () => {
+      userActivation = true;
+      confirm.click(); confirm.click();
+      userActivation = false;
+    });
+    expect(permissionWasSynchronous).toBe(true);
+    expect(apis.requestPermission).toHaveBeenCalledOnce();
+    expect(pushCalls("GET")).toHaveLength(1);
+    expect(apis.worker.getRegistration).toHaveBeenCalledOnce();
+    expect(apis.subscribe).toHaveBeenCalledOnce(); expect(pushCalls("POST")).toHaveLength(1);
+    expect(document.body.textContent).toContain("Đã bật Web Push cho thiết bị này.");
+    expect(document.querySelector(".toast.error")).toBeNull();
+  });
   it.each([
     ["unsupported", "Trình duyệt này không hỗ trợ Web Push."], ["denied", "Bạn đã từ chối quyền nhận thông báo."],
     ["worker", "Không thể khởi tạo thông báo trên thiết bị. Hãy thử lại."],
@@ -252,7 +339,10 @@ describe("deliberate device push setup", () => {
   });
   it("classifies a rejected permission prompt as setup failure", async () => {
     const apis = installPushApis("default"); apis.requestPermission.mockRejectedValueOnce(new Error("raw permission error"));
-    expect(await setupDevicePush()).toEqual({ status: "failed", message: "Không thể bật thông báo trên thiết bị. Hãy thử lại." });
+    const preparation = await prepareDevicePush();
+    expect(preparation.status).toBe("ready");
+    if (preparation.status !== "ready") throw new Error("Expected prepared device");
+    expect(await setupDevicePush(preparation.prepared)).toEqual({ status: "failed", message: "Không thể bật thông báo trên thiết bị. Hãy thử lại." });
     expect(apis.subscribe).not.toHaveBeenCalled();
   });
   it("bounds a stalled worker without requesting permission or subscribing", async () => {
