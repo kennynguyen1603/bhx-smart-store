@@ -6,20 +6,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "next-auth";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { EslScannerModal, type TaskSummary } from "@/components/esl-scanner-modal";
-import { Badge, type BadgeVariant } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
+import { TASK_STATUS_PRESENTATION } from "@/lib/task-status";
 import { Logo } from "@/components/logo";
 import { DEMO_ACCOUNTS } from "@/lib/demo-roles";
 import { StaffNotificationCenter, type StaffNotification } from "@/components/staff-notification-center";
 import { cacheStaffPayload, enqueueMutation, flushOfflineMutations, getCachedStaffPayload, markCachedStaffNotificationsRead, offlineQueueCount } from "@/lib/offline";
 
 type TaskStatus = TaskSummary["status"];
-export const TASK_STATUS_PRESENTATION: Record<TaskStatus, { label: string; variant: BadgeVariant }> = {
-  OPEN: { label: "Mới", variant: "default" },
-  IN_PROGRESS: { label: "Đang làm", variant: "secondary" },
-  BLOCKED: { label: "Bị chặn", variant: "destructive" },
-  COMPLETED: { label: "Hoàn thành", variant: "success" },
-  CANCELLED: { label: "Đã huỷ", variant: "outline" },
-};
+export { TASK_STATUS_PRESENTATION } from "@/lib/task-status";
 
 function TaskStatusBadge({ status }: { status: TaskStatus }) {
   const { label, variant } = TASK_STATUS_PRESENTATION[status];

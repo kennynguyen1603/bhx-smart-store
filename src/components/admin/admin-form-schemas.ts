@@ -102,3 +102,15 @@ export type FefoRuleCreateValues = z.infer<typeof fefoRuleCreateSchema>;
 export type FefoRuleEditValues = z.infer<typeof fefoRuleEditSchema>;
 export type UserCreateValues = z.infer<typeof userCreateSchema>;
 export type UserEditValues = z.infer<typeof userEditSchema>;
+
+// Keep the output contract aligned with POST /api/admin/tasks.
+export const taskCreateSchema = z.object({
+  storeId: reference("cửa hàng"),
+  type: z.enum(["RESTOCK", "FEFO", "QUARANTINE"], { error: "Chọn loại nhiệm vụ" }),
+  productId: reference("sản phẩm"), shelfId: reference("kệ"),
+  lotId: reference("lô hàng").optional(), assigneeId: reference("người nhận").optional(),
+  priority: z.enum(["NORMAL", "MEDIUM", "HIGH"], { error: "Chọn độ ưu tiên" }),
+  dueAt: z.iso.datetime({ offset: true, error: "Hạn hoàn thành không hợp lệ" }).optional(),
+  note: z.string().trim().max(2000, "Ghi chú không được quá 2000 ký tự").optional(),
+});
+export type TaskCreateValues = z.infer<typeof taskCreateSchema>;

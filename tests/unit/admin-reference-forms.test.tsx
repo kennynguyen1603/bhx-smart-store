@@ -5,7 +5,7 @@ import type { Session } from "next-auth";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AdminApp } from "@/components/admin-app";
 import { toast } from "@/components/ui/sonner";
-import { referenceOverview, referenceStore, shelf, lot, rule, account, otherStore } from "../fixtures/admin-reference";
+import { referenceOverview, referenceStore, secondProduct, secondSupplier, shelf, lot, rule, account, otherStore } from "../fixtures/admin-reference";
 const user: Session["user"] = { id: "admin", name: "Quản trị", role: "ADMIN", storeIds: ["store"], defaultStoreId: "store" };
 let root: Root, host: HTMLDivElement;
 let data: typeof referenceOverview;
@@ -55,23 +55,28 @@ async function select(label: string, option: string) {
   expect(el, option).toBeDefined(); await act(async () => el!.click());
 }
 const edits = [
-  { kind: "lot", tab: "Danh mục", trigger: "Sửa", row: "LOT-TWO", resource: "lots", id: lot.id, readonly: { "Mã lô": lot.batchCode, "Cửa hàng": lot.storeId, "Sản phẩm": lot.productId, "Nhà cung cấp": lot.supplierId, "Ngày nhận": lot.receivedAt }, inputs: { "Xuất xứ": lot.origin, "Hạn sử dụng": "2026-12-25", "Số lượng": "17" }, body: { origin: lot.origin, expiryDate: "2026-12-25", quantity: 17 } },
-  { kind: "zone", tab: "Sơ đồ & ESL", trigger: zoneTrigger(), row: "", resource: "zones", id: "zone-second", readonly: { "Cửa hàng": "store" }, inputs: { "Tên khu vực": "Khu thứ hai", "Màu": "#abcdef", "Vị trí X": "2", "Vị trí Y": "3", "Chiều rộng": "4", "Chiều cao": "2" }, body: { name: "Khu thứ hai", color: "#abcdef", x: 2, y: 3, width: 4, height: 2 } },
-  { kind: "shelf", tab: "Sơ đồ & ESL", trigger: "Sửa kệ K-02", row: "", resource: "shelves", id: shelf.id, readonly: { "Mã kệ": shelf.code, "Cửa hàng": "store" }, inputs: { "Tên kệ": shelf.label, "Vị trí X": "3", "Vị trí Y": "2", "Chiều rộng": "2", "Chiều cao": "3" }, body: { label: shelf.label, zoneId: shelf.zoneId, x: 3, y: 2, width: 2, height: 3 } },
-  { kind: "esl", tab: "Sơ đồ & ESL", trigger: "Sửa ESL ESL-TWO", row: "", resource: "esls", id: "esl-second", readonly: { "Mã ESL": "ESL-TWO", "Cửa hàng": "store" }, inputs: {}, body: { shelfId: shelf.id, productId: "product-second", ledOn: true } },
-  { kind: "fefo", tab: "FEFO", trigger: "Sửa", row: "35%", resource: "fefo-rules", id: rule.id, readonly: { "Cửa hàng": "store" }, inputs: { "Số ngày còn lại": "5", "Phần trăm giảm": "35" }, body: { daysRemaining: 5, discountPercent: 35, quarantine: true, active: false } },
+  { kind: "lot", tab: "Danh mục", trigger: "Sửa", row: "LOT-TWO", resource: "lots", id: lot.id, readonly: { "Mã lô": lot.batchCode, "Cửa hàng": referenceStore.name, "Sản phẩm": lot.product.name, "Nhà cung cấp": lot.supplier.name, "Ngày nhận": lot.receivedAt }, inputs: { "Xuất xứ": lot.origin, "Hạn sử dụng": "2026-12-25", "Số lượng": "17" }, body: { origin: lot.origin, expiryDate: "2026-12-25", quantity: 17 } },
+  { kind: "zone", tab: "Sơ đồ & ESL", trigger: zoneTrigger(), row: "", resource: "zones", id: "zone-second", readonly: { "Cửa hàng": referenceStore.name }, inputs: { "Tên khu vực": "Khu thứ hai", "Màu": "#abcdef", "Vị trí X": "2", "Vị trí Y": "3", "Chiều rộng": "4", "Chiều cao": "2" }, body: { name: "Khu thứ hai", color: "#abcdef", x: 2, y: 3, width: 4, height: 2 } },
+  { kind: "shelf", tab: "Sơ đồ & ESL", trigger: "Sửa kệ K-02", row: "", resource: "shelves", id: shelf.id, readonly: { "Mã kệ": shelf.code, "Cửa hàng": referenceStore.name }, inputs: { "Tên kệ": shelf.label, "Vị trí X": "3", "Vị trí Y": "2", "Chiều rộng": "2", "Chiều cao": "3" }, body: { label: shelf.label, zoneId: shelf.zoneId, x: 3, y: 2, width: 2, height: 3 } },
+  { kind: "esl", tab: "Sơ đồ & ESL", trigger: "Sửa ESL ESL-TWO", row: "", resource: "esls", id: "esl-second", readonly: { "Mã ESL": "ESL-TWO", "Cửa hàng": referenceStore.name }, inputs: {}, body: { shelfId: shelf.id, productId: "product-second", ledOn: true } },
+  { kind: "fefo", tab: "FEFO", trigger: "Sửa", row: "35%", resource: "fefo-rules", id: rule.id, readonly: { "Cửa hàng": referenceStore.name }, inputs: { "Số ngày còn lại": "5", "Phần trăm giảm": "35" }, body: { daysRemaining: 5, discountPercent: 35, quarantine: true, active: false } },
   { kind: "user", tab: "Người dùng", trigger: "Sửa", row: account.email, resource: "users", id: account.id, readonly: { "Email": account.email }, inputs: { "Họ tên": account.name, "Mật khẩu mới": "" }, body: { name: account.name, role: "MANAGER", active: false, storeIds: [otherStore.id, "store"] } },
+  { kind: "store", tab: "Tổng quan", trigger: "Sửa cửa hàng", row: "", resource: "stores", id: referenceStore.id, readonly: { "Mã cửa hàng": referenceStore.code }, inputs: { "Tên cửa hàng": referenceStore.name }, body: { name: referenceStore.name, address: referenceStore.address, mapWidth: referenceStore.mapWidth, mapHeight: referenceStore.mapHeight, active: true } },
+  { kind: "product", tab: "Danh mục", trigger: "Sửa", row: secondProduct.sku, resource: "products", id: secondProduct.id, readonly: { "SKU": secondProduct.sku, "Mã vạch": secondProduct.barcode }, inputs: { "Tên sản phẩm": secondProduct.name }, body: { name: secondProduct.name, category: secondProduct.category, unit: secondProduct.unit, basePriceVnd: secondProduct.basePriceVnd, emoji: secondProduct.emoji } },
+  { kind: "supplier", tab: "Danh mục", trigger: "Sửa", row: secondSupplier.code, resource: "suppliers", id: secondSupplier.id, readonly: { "Mã nhà cung cấp": secondSupplier.code }, inputs: { "Tên nhà cung cấp": secondSupplier.name }, body: { name: secondSupplier.name, country: secondSupplier.country, certificate: secondSupplier.certificate, active: true } },
+  { kind: "inventory", tab: "Tồn kho", trigger: "Sửa", row: "Sữa tươi hai", resource: "inventories", id: "inventory", readonly: {}, inputs: { "Số lượng trên kệ": "7", "Số lượng kho sau": "19" }, body: { onShelf: 7, backroom: 19, capacity: 24, lowThreshold: 4 } },
 ];
 function zoneTrigger() { return "Khu thứ hai"; }
 async function openEdit(sample: typeof edits[number]) {
   await mount(sample.tab);
-  const row = sample.row ? [...document.querySelectorAll("tr")].find(el => el.textContent?.includes(sample.row)) : document;
+  const row = sample.row ? [...document.querySelectorAll("tr,.log-row")].find(el => el.textContent?.includes(sample.row)) : document;
   // Quarantined rules display their action instead of the percentage.
   await click(sample.trigger, row || document); return dialog();
 }
 it.each(edits)("$kind edit initializes persisted values and submits only API-supported fields", async sample => {
   await openEdit(sample);
-  expect(field("ID").value).toBe(sample.id); expect(field("ID").readOnly).toBe(true);
+  expect([...dialog().querySelectorAll("label")].map(el => el.textContent)).not.toContain("ID");
+  for (const input of dialog().querySelectorAll<HTMLInputElement>("input[readonly]")) expect([sample.id, "store", "product-second", "supplier-second"]).not.toContain(input.value);
   for (const [label, value] of Object.entries(sample.readonly)) { expect(field(label).value).toBe(value); expect(field(label).readOnly).toBe(true); }
   for (const [label, value] of Object.entries(sample.inputs)) expect(field(label).value).toBe(value);
   if (sample.kind === "shelf") expect(field("Khu vực").textContent).toContain("Khu thứ hai");
@@ -126,7 +131,7 @@ it("shows mode-specific password guidance", async () => {
 });
 it("preserves unavailable persisted memberships and references on edit", async () => {
   data.stores = [referenceStore]; data.products = [data.products[0]];
-  await openEdit(edits[5]); await submit(); expect(writes[0].body?.storeIds).toEqual([otherStore.id, "store"]);
+  await openEdit(edits[5]); expect(dialog().textContent).not.toContain(otherStore.id); expect(field("Cửa hàng mặc định").textContent).toContain("Không còn khả dụng"); await submit(); expect(writes[0].body?.storeIds).toEqual([otherStore.id, "store"]);
 });
 it("disables create actions and explains missing prerequisites", async () => {
   data.products = []; data.suppliers = []; data.stores[0].shelves = [];
@@ -179,8 +184,8 @@ it("explains and disables all store-dependent creates when no store exists", asy
 });
 it("preserves ESL and shelf references absent from available options", async () => {
   data.products = [data.products[0]]; data.stores[0].zones = [];
-  await openEdit(edits[3]); expect(field("Sản phẩm").textContent).toContain("product-second"); await submit(); expect(writes[0].body).toEqual(edits[3].body);
-  await click("Sửa kệ K-02"); expect(field("Khu vực").textContent).toContain("zone-second"); await submit(); expect(writes[1].body).toEqual(edits[2].body);
+  await openEdit(edits[3]); expect(field("Sản phẩm").textContent).toContain("Không còn khả dụng"); await submit(); expect(writes[0].body).toEqual(edits[3].body);
+  await click("Sửa kệ K-02"); expect(field("Khu vực").textContent).toContain("Không còn khả dụng"); await submit(); expect(writes[1].body).toEqual(edits[2].body);
 });
 it("keeps destructive confirmation after failure and closes on write success despite refresh failure", async () => {
   await mount("Tổng quan"); await click("Vô hiệu hoá");

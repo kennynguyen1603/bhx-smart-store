@@ -296,3 +296,13 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .ui-badge-success{color:#45675a;background:#edf2ef}
 .ui-badge-outline{color:var(--muted);background:white;border-color:var(--line)}
 .esl-task-choices .task-row{grid-template-columns:minmax(0,1fr) auto}
+
+.admin-task-panel .panel-header { gap: 16px; flex-wrap: wrap; }
+.admin-task-filters { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+.admin-task-filter { display: grid; gap: 8px; flex: 1 1 180px; min-width: 0; }
+.admin-task-badges { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-task-table { min-width: 740px; }
+.admin-task-table td { vertical-align: top; }
+.admin-task-table details { max-width: 340px; margin-top: 8px; white-space: normal; overflow-wrap: anywhere; }
+.admin-task-table summary { cursor: pointer; color: var(--green-700); padding: 8px 0; }
+.admin-task-table details p { margin: 8px 0; }

@@ -24,15 +24,15 @@ type ImmutableFields = {
   "fefo-rule": { storeId: string };
   user: { email: string };
 };
-export type AdminEntityKind = keyof Forms | "inventory";
+export type AdminEntityKind = keyof Forms | "inventory" | "task";
 export type AdminDialogDescriptor = {
   [Kind in keyof Forms]:
     | { kind: Kind; mode: "create"; defaultValues: Partial<z.input<Forms[Kind][0]>> }
     | { kind: Kind; mode: "edit"; id: string; defaultValues: z.input<Forms[Kind][1]>; readOnlyValues?: Kind extends keyof ImmutableFields ? ImmutableFields[Kind] : never }
-}[keyof Forms] | { kind: "inventory"; mode: "edit"; id: string; defaultValues: schemas.InventoryValues };
+}[keyof Forms] | { kind: "inventory"; mode: "edit"; id: string; defaultValues: schemas.InventoryValues } | { kind: "task"; mode: "create"; defaultValues: Partial<z.input<typeof schemas.taskCreateSchema>> };
 
 export type AdminConfirmDescriptor = {
-  kind: Exclude<AdminEntityKind, "inventory">;
+  kind: Exclude<AdminEntityKind, "inventory" | "task">;
   id: string;
   action: "hide" | "deactivate" | "close" | "detach" | "delete" | "lock";
   title: string;

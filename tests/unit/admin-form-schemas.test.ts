@@ -4,7 +4,7 @@ import {
   supplierCreateSchema, supplierEditSchema, lotCreateSchema, lotEditSchema,
   zoneCreateSchema, zoneEditSchema, shelfCreateSchema, shelfEditSchema,
   eslCreateSchema, eslEditSchema, fefoRuleCreateSchema, fefoRuleEditSchema,
-  userCreateSchema, userEditSchema,
+  userCreateSchema, userEditSchema, taskCreateSchema,
 } from "@/components/admin/admin-form-schemas";
 import type { ZodType } from "zod";
 
@@ -82,4 +82,13 @@ describe("Admin Vietnamese form validation", () => {
     expect(eslEditSchema.parse({ code: "ESL02", storeId: "store-1", shelfId: "shelf-2", productId: "product-2" })).toEqual({ shelfId: "shelf-2", productId: "product-2" });
     expect(fefoRuleCreateSchema.parse({ storeId: "store-2", daysRemaining: 0, discountPercent: 0, active: false })).toEqual({ storeId: "store-2", daysRemaining: 0, discountPercent: 0, quarantine: false });
   });
+});
+
+const task = { storeId: "store-2", type: "RESTOCK", productId: "product-2", shelfId: "shelf-2", priority: "HIGH" };
+it("validates task commands and keeps optional fields compatible with the command API", () => {
+  expect(taskCreateSchema.parse(task)).toEqual(task);
+  expect(taskCreateSchema.parse({ ...task, type: "FEFO", lotId: "lot-2", assigneeId: "staff-2", dueAt: "2030-01-02T10:00:00+07:00", note: "  Giao ca  " })).toEqual({ ...task, type: "FEFO", lotId: "lot-2", assigneeId: "staff-2", dueAt: "2030-01-02T10:00:00+07:00", note: "Giao ca" });
+});
+it.each([{ storeId: "" }, { type: "OTHER" }, { productId: "" }, { shelfId: "" }, { priority: "URGENT" }, { priority: undefined }, { lotId: "" }, { assigneeId: "" }, { dueAt: "2030-01-02T10:00" }, { dueAt: "bad" }, { note: "a".repeat(2001) }])("rejects invalid task command %j", patch => {
+  expect(taskCreateSchema.safeParse({ ...task, ...patch }).success).toBe(false);
 });

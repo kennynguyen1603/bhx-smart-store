@@ -52,3 +52,8 @@ export function CoreActive() {
     <FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl><FormMessage />
   </FormItem>} />;
 }
+
+/** Immutable references render a name; opaque identifiers stay in form state only. */
+export function ReferenceReadOnly({ label, value, options }: { label: string; value: string; options: import("./reference-fields").ReferenceOption[] }) {
+  return <CoreReadOnly label={label} value={options.find(option => option.id === value)?.name || "Không còn khả dụng"} />;
+}
