@@ -1,6 +1,6 @@
 # Thiết kế: Xử lý feedback đợt 3
 
-Ngày: 2026-11-16 · Nguồn: `../feedback-dot3.md` (thư mục `docs/` cấp dự án)
+Ngày: 2026-11-16 · Nguồn: `../../../../docs/feedback-dot3.md` (tức `kiosk/docs/feedback-dot3.md`, thư mục `docs/` ở cấp trên repo `bhx-smart-store-mvp`)
 
 ## Mục đích và lý do
 
@@ -27,10 +27,19 @@ Người test bản demo BHX Smart Store (kiosk khách hàng, app nhân viên, t
 ## Mục tiêu
 
 1. **Giá cận date hiển thị thật.**
-   - Seed có lô giảm giá: YOGURT giảm 20%, EGGS giảm 30%, khớp với ghi chú task FEFO đang có.
-   - CHEESE (đã quá hạn) chuyển sang `QUARANTINED`.
-   - Có ít nhất một lô `SOLD_OUT` hoặc `quantity: 0` để minh họa trường hợp không ảnh hưởng giá.
-   - Giá công khai bỏ qua lô hết hàng, quá HSD (`expiryDate < now`) hoặc bị cách ly. Không còn lô hợp lệ đang giảm thì dùng giá gốc.
+   - **Hai loại dữ liệu cận date trong seed (người dùng chọn 1b):**
+     - *Giảm giá có sẵn*: đặt trên lô của **sản phẩm khác** với các task FEFO, để kiosk hiện giá giảm ngay khi mở. Gợi ý: GREENS và BREAD, mỗi sản phẩm một lô `MARKED_DOWN` giảm 20%, HSD +3 ngày (nằm trong khung giảm 20% của luật FEFO `daysRemaining: 3`). Lô này phải là lô hợp lệ hết hạn sớm nhất của sản phẩm đó (lô còn lại hết hạn muộn hơn), để quy tắc giá ở dưới chọn đúng nó.
+     - *Task FEFO để người test tự làm*: YOGURT và EGGS giữ task FEFO `OPEN`, gắn với lô hết hạn sớm nhất, lô này **chưa** giảm giá. Người test bấm hoàn thành rồi thấy giá ở kiosk đổi. Mức giảm khi hoàn thành theo luật FEFO tại thời điểm hoàn thành (hiện có: còn ≤3 ngày giảm 20%, còn ≤1 ngày giảm 30%).
+     - CHEESE: giữ lô đã quá hạn (HSD −1 ngày) và task `QUARANTINE` `OPEN` để người test tự cách ly. Lô này chưa ở trạng thái `QUARANTINED` trong seed, nhưng giá công khai vẫn bỏ qua nó vì đã quá HSD.
+     - Có ít nhất một lô `SOLD_OUT` hoặc `quantity: 0` (đặt HSD sớm hơn lô còn lại của cùng sản phẩm) để minh họa lô không ảnh hưởng giá.
+   - **Dữ liệu demo dùng được khoảng 2 ngày sau khi seed (người dùng chọn):**
+     - Lô của task FEFO (YOGURT, EGGS) đặt HSD +3 ngày, để vẫn còn bán được và làm task được trong 2 ngày. EGGS hiện là +1 ngày, quá ngắn, phải dời.
+     - Lô giảm giá có sẵn cũng +3 ngày.
+     - Ghi chú task FEFO ("còn x ngày · giảm y%") phải tính từ HSD và luật FEFO thật lúc seed, không ghi cứng.
+     - README ghi: chạy lại `db:seed` trước mỗi buổi test, hoặc ít nhất 2 ngày một lần.
+   - **Lô nào được tính giá:** bỏ qua lô hết hàng (`SOLD_OUT` hoặc `quantity ≤ 0`), lô bị cách ly, và lô đã tới hoặc quá HSD. **Không bán vào đúng ngày hết hạn** (khớp luật FEFO: còn 0 ngày thì cách ly). So sánh theo **ngày** ở múi giờ của cửa hàng (`Store.timeZone`, mặc định `Asia/Ho_Chi_Minh`), không so sánh mốc giờ UTC.
+   - **Giá công khai lấy từ lô hợp lệ hết hạn sớm nhất** (lô sẽ được bán trước theo FEFO). Lô đó đã giảm giá thì hiện giá giảm; chưa giảm thì hiện giá gốc, kể cả khi một lô muộn hơn đang giảm. Không còn lô hợp lệ thì hiện giá gốc.
+   - **Không giảm chồng:** `completeFefoTask` từ chối (lỗi rõ ràng, ví dụ 409) khi lô đã có `markdownPercent` bằng hoặc cao hơn mức sắp áp. Nâng mức theo luật (20% lên 30%) được phép, và thay thế mức cũ chứ không cộng dồn.
    - Card và chi tiết sản phẩm ở kiosk hiện giá giảm, giá gốc gạch ngang và % giảm (component đã có, chỉ cần dữ liệu và kiểm tra hiển thị).
 2. **Không tự cập nhật khi mở task.**
    - Mở task chỉ xem chi tiết.
@@ -89,7 +98,7 @@ Người test bản demo BHX Smart Store (kiosk khách hàng, app nhân viên, t
 - Next.js 16 App Router: đọc `node_modules/next/dist/docs` trước khi viết code (theo AGENTS.md). Ngoài ra React 19, next-auth 4 (credentials), Prisma 7 với Neon, deploy trên Vercel (serverless).
 - Dùng lại thứ đã có: shadcn/ui, sonner, react-hook-form + zod, lucide-react, @zxing/browser, qrcode, web-push.
 - Thay đổi schema (thêm `TASK_COMPLETED`) cần migration Prisma.
-- Sau khi đổi seed phải chạy lại `db:seed` trên môi trường demo. README ghi rõ.
+- Sau khi đổi seed phải chạy lại `db:seed` trên môi trường demo. Dữ liệu chỉ đúng khoảng 2 ngày, nên README ghi: seed lại trước mỗi buổi test hoặc 2 ngày một lần.
 - Test bằng vitest (logic giá, chữ số kiểm tra EAN, tra ESL, quyền giao task, endpoint dấu thay đổi) và Playwright cho các luồng chính. `npm run check` phải xanh.
 
 ## Các phương án đã cân nhắc
@@ -116,6 +125,10 @@ Người test bản demo BHX Smart Store (kiosk khách hàng, app nhân viên, t
 ## Quyết định của mình (người dùng có thể sửa)
 
 - Khoảng polling 4 giây; dừng khi tab ẩn.
+- Không bán lô vào đúng ngày hết hạn; so sánh theo ngày ở múi giờ cửa hàng.
+- Giá công khai lấy từ lô hợp lệ hết hạn sớm nhất; lô đó chưa giảm thì hiện giá gốc.
+- Giảm giá có sẵn đặt trên GREENS và BREAD (20%, HSD +3 ngày); YOGURT, EGGS, CHEESE giữ task mở cho người test tự làm.
+- Không giảm chồng: hoàn thành FEFO lần nữa với mức bằng hoặc thấp hơn thì báo lỗi; nâng mức thì thay thế.
 - ESL có một task thì không tự mở task nữa (lý do ở mục 8).
 - Task admin giao dùng ba loại có sẵn, không thêm loại "yêu cầu" tự do.
 - Mã vạch EAN-13 vẽ bằng SVG tự viết (mã hóa EAN-13 đơn giản), không thêm thư viện. Nếu khó thì dùng `jsbarcode`.
