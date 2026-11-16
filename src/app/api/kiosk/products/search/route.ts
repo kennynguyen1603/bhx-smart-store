@@ -4,11 +4,12 @@ import { selectPublicPrice } from "@/lib/kiosk-pricing";
 import { normalizeSearch } from "@/lib/normalize";
 
 export async function GET(request: Request) {
+  const now = new Date();
   const url = new URL(request.url);
   const storeCode = url.searchParams.get("storeCode") || "NT-Q5";
   const query = normalizeSearch(url.searchParams.get("q") || "");
   const category = url.searchParams.get("category");
-  const store = await prisma.store.findUnique({ where: { code: storeCode }, select: { id: true, code: true, name: true, address: true } });
+  const store = await prisma.store.findUnique({ where: { code: storeCode }, select: { id: true, code: true, name: true, address: true, timeZone: true } });
   if (!store) return Response.json({ error: { code: "STORE_NOT_FOUND", message: "Không tìm thấy cửa hàng" } }, { status: 404 });
   const inventories = await prisma.inventory.findMany({
     where: {
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
     store,
     products: inventories.map((inventory) => {
       const availability = availabilityOf(inventory);
-      const price = selectPublicPrice(inventory.product.basePriceVnd, inventory.product.lots);
+      const price = selectPublicPrice(inventory.product.basePriceVnd, inventory.product.lots, { now, timeZone: store.timeZone });
       return {
         id: inventory.product.id,
         sku: inventory.product.sku,

@@ -3,11 +3,13 @@ import { availabilityLabel, availabilityOf } from "@/lib/kiosk";
 import { selectPublicPrice } from "@/lib/kiosk-pricing";
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const now = new Date();
   const { id } = await context.params;
   const url = new URL(request.url);
   const storeCode = url.searchParams.get("storeCode") || "NT-Q5";
   const store = await prisma.store.findUnique({
     where: { code: storeCode },
+    select: { id: true, timeZone: true },
   });
   if (!store) return Response.json({ error: { code: "STORE_NOT_FOUND", message: "Không tìm thấy cửa hàng" } }, { status: 404 });
   const product = await prisma.product.findFirst({ where: { OR: [{ id }, { sku: id }, { barcode: id }] } });
@@ -18,10 +20,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     where: { storeId: store.id, productId: product.id, quantity: { gt: 0 }, status: { in: ["AVAILABLE", "MARKED_DOWN"] } },
     include: { supplier: true },
     orderBy: { expiryDate: "asc" },
-    take: 3,
   });
   const availability = availabilityOf(inventory);
-  const price = selectPublicPrice(product.basePriceVnd, lots);
+  const price = selectPublicPrice(product.basePriceVnd, lots, { now, timeZone: store.timeZone });
   return Response.json({
     product: {
       id: product.id,
@@ -35,7 +36,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       availability,
       availabilityLabel: availabilityLabel(availability),
       shelf: inventory.shelf,
-      traceability: lots.map((lot) => ({ batchCode: lot.batchCode, origin: lot.origin, expiryDate: lot.expiryDate, supplier: lot.supplier.name, certificate: lot.supplier.certificate, markdownPercent: lot.markdownPercent })),
+      traceability: lots.slice(0, 3).map((lot) => ({ batchCode: lot.batchCode, origin: lot.origin, expiryDate: lot.expiryDate, supplier: lot.supplier.name, certificate: lot.supplier.certificate, markdownPercent: lot.markdownPercent })),
     },
   });
 }

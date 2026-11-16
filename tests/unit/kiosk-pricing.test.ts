@@ -1,35 +1,50 @@
 import { describe, expect, it } from "vitest";
-import { selectPublicPrice } from "@/lib/kiosk-pricing";
+import { selectPublicPrice, type PublicPriceContext, type PublicPriceLot } from "@/lib/kiosk-pricing";
 
 describe("selectPublicPrice", () => {
   const basePriceVnd = 32_600;
+  const context: PublicPriceContext = { now: new Date("2026-11-15T17:30:00Z"), timeZone: "Asia/Ho_Chi_Minh" };
+  const regularLot: PublicPriceLot = { status: "AVAILABLE", quantity: 4, expiryDate: new Date("2026-11-17"), markdownPercent: null, markdownPriceVnd: null };
+  const markdownLot: PublicPriceLot = { status: "MARKED_DOWN", quantity: 2, expiryDate: new Date("2026-11-17"), markdownPercent: 20, markdownPriceVnd: 26_080 };
 
-  it("returns the regular price for the earliest available lot", () => {
+  it("returns the regular price when the earliest valid lot precedes a markdown", () => {
     expect(selectPublicPrice(basePriceVnd, [
-      { status: "AVAILABLE", quantity: 4, expiryDate: new Date("2026-11-16"), markdownPercent: null, markdownPriceVnd: null },
-      { status: "MARKED_DOWN", quantity: 4, expiryDate: new Date("2026-11-17"), markdownPercent: 20, markdownPriceVnd: 26_080 },
-    ])).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
+      { ...markdownLot, expiryDate: new Date("2026-11-18") },
+      regularLot,
+    ], context)).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
   });
 
-  it("returns the markdown from the earliest marked-down sellable lot", () => {
+  it("returns current, original and percent prices from the earliest valid markdown", () => {
     expect(selectPublicPrice(basePriceVnd, [
-      { status: "MARKED_DOWN", quantity: 4, expiryDate: new Date("2026-11-16"), markdownPercent: 20, markdownPriceVnd: 26_080 },
-      { status: "AVAILABLE", quantity: 4, expiryDate: new Date("2026-11-17"), markdownPercent: null, markdownPriceVnd: null },
-    ])).toEqual({ priceVnd: 26_080, originalPriceVnd: 32_600, markdownPercent: 20 });
+      { ...regularLot, expiryDate: new Date("2026-11-18") },
+      markdownLot,
+    ], context)).toEqual({ priceVnd: 26_080, originalPriceVnd: 32_600, markdownPercent: 20 });
   });
 
-  it("excludes quarantined and zero-quantity lots", () => {
+  it.each([
+    ["expiry day", { expiryDate: new Date("2026-11-16") }],
+    ["past day", { expiryDate: new Date("2026-11-15") }],
+    ["zero quantity", { quantity: 0 }],
+    ["sold out", { status: "SOLD_OUT" as const }],
+    ["quarantined", { status: "QUARANTINED" as const }],
+  ])("excludes a lot on its %s", (_reason, override) => {
     expect(selectPublicPrice(basePriceVnd, [
-      { status: "QUARANTINED", quantity: 3, expiryDate: new Date("2026-11-14"), markdownPercent: 50, markdownPriceVnd: 16_300 },
-      { status: "MARKED_DOWN", quantity: 0, expiryDate: new Date("2026-11-15"), markdownPercent: 30, markdownPriceVnd: 22_820 },
-      { status: "MARKED_DOWN", quantity: 2, expiryDate: new Date("2026-11-16"), markdownPercent: 20, markdownPriceVnd: 26_080 },
-    ])).toEqual({ priceVnd: 26_080, originalPriceVnd: 32_600, markdownPercent: 20 });
+      { ...markdownLot, markdownPercent: 50, markdownPriceVnd: 16_300, ...override },
+      { ...regularLot, expiryDate: new Date("2026-11-18") },
+    ], context)).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
   });
 
-  it("falls back to the base price when no sellable lot exists", () => {
-    expect(selectPublicPrice(basePriceVnd, [
-      { status: "SOLD_OUT", quantity: 8, expiryDate: new Date("2026-11-16"), markdownPercent: null, markdownPriceVnd: null },
-      { status: "AVAILABLE", quantity: 0, expiryDate: new Date("2026-11-17"), markdownPercent: null, markdownPriceVnd: null },
-    ])).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
+  it("uses the store timezone to decide whether an expiry date is sellable", () => {
+    const lots = [{ ...markdownLot, expiryDate: new Date("2026-11-16") }];
+    expect(selectPublicPrice(basePriceVnd, lots, { ...context, timeZone: "UTC" })).toEqual({ priceVnd: 26_080, originalPriceVnd: 32_600, markdownPercent: 20 });
+    expect(selectPublicPrice(basePriceVnd, lots, context)).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
+  });
+
+  it.each(["", "invalid/timezone"])("excludes expiry-day markdowns with persisted timezone %j", (timeZone) => {
+    expect(selectPublicPrice(basePriceVnd, [{ ...markdownLot, expiryDate: new Date("2026-11-16") }], { ...context, timeZone })).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
+  });
+
+  it("falls back to the base price when no lots exist", () => {
+    expect(selectPublicPrice(basePriceVnd, [], context)).toEqual({ priceVnd: 32_600, originalPriceVnd: 32_600, markdownPercent: null });
   });
 });
