@@ -1,55 +1,22 @@
 "use client";
 
-import { AlertTriangle, Bell, CalendarClock, CheckCircle2, ClipboardList, Clock3, History, LoaderCircle, LogOut, PackagePlus, RefreshCw, ScanLine, Store, Wifi, WifiOff, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, Clock3, History, LogOut, PackagePlus, RefreshCw, ScanLine, Store, Wifi, WifiOff, X } from "lucide-react";
 import { signOut } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "next-auth";
 import { BarcodeScanner } from "@/components/barcode-scanner";
 import { EslScannerModal, type TaskSummary } from "@/components/esl-scanner-modal";
 import { Logo } from "@/components/logo";
+import { StaffNotificationCenter, type StaffNotification } from "@/components/staff-notification-center";
 import { cacheStaffPayload, enqueueMutation, flushOfflineMutations, getCachedStaffPayload, offlineQueueCount } from "@/lib/offline";
 
 type StoreOption = { id: string; code: string; name: string; address: string };
 type Inventory = { id: string; onShelf: number; backroom: number; capacity: number; lowThreshold: number; version: number; product: { id: string; name: string; emoji: string }; shelf: { id: string; code: string; label: string } };
 type Task = TaskSummary & { inventory: Inventory | null };
-type Payload = { stores: StoreOption[]; selectedStoreId: string; tasks: Task[]; inventories: Inventory[]; notifications: { id: string }[]; recentEvents: { id: string; type: string; note: string; createdAt: string; actor: { name: string } | null; task: { product: { name: string }; shelf: { label: string } } }[]; metrics: { openTasks: number; highPriority: number; lowShelves: number; fefoTasks: number; completionRate: number } };
+type Payload = { stores: StoreOption[]; selectedStoreId: string; tasks: Task[]; inventories: Inventory[]; notifications: StaffNotification[]; recentEvents: { id: string; type: string; note: string; createdAt: string; actor: { name: string } | null; task: { product: { name: string }; shelf: { label: string } } }[]; metrics: { openTasks: number; highPriority: number; lowShelves: number; fefoTasks: number; completionRate: number } };
 
 function uuid() { return crypto.randomUUID(); }
 function time(value: string) { return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(new Date(value)); }
-
-const PUSH_READY_TIMEOUT_MS = 5_000;
-const PUSH_OPERATION_TIMEOUT_MS = 8_000;
-
-class PushSetupError extends Error {}
-
-function waitForServiceWorker(ready: Promise<ServiceWorkerRegistration>) {
-  return new Promise<ServiceWorkerRegistration>((resolve, reject) => {
-    const timeout = window.setTimeout(
-      () => reject(new PushSetupError("Service Worker chưa sẵn sàng. Hãy thử lại.")),
-      PUSH_READY_TIMEOUT_MS,
-    );
-    ready.then(
-      (registration) => { window.clearTimeout(timeout); resolve(registration); },
-      () => { window.clearTimeout(timeout); reject(new PushSetupError("Không thể kết nối Service Worker. Hãy thử lại.")); },
-    );
-  });
-}
-
-function waitForPushOperation<T>(promise: Promise<T>, timeoutMessage: string, failureMessage: string, onTimeout?: () => void) {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const timeout = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      onTimeout?.();
-      reject(new PushSetupError(timeoutMessage));
-    }, PUSH_OPERATION_TIMEOUT_MS);
-    promise.then(
-      (value) => { if (!settled) { settled = true; window.clearTimeout(timeout); resolve(value); } },
-      (error) => { if (!settled) { settled = true; window.clearTimeout(timeout); reject(error instanceof PushSetupError ? error : new PushSetupError(failureMessage)); } },
-    );
-  });
-}
 
 export function StaffApp({ user }: { user: Session["user"] }) {
   const [data, setData] = useState<Payload | null>(null);
@@ -64,11 +31,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const [queueCount, setQueueCount] = useState(0);
   const [toast, setToast] = useState<{ message: string; error?: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pushPending, setPushPending] = useState(false);
-  const pushPendingRef = useRef(false);
-  const pushAttemptRef = useRef(0);
-  const pushControllerRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
+  const readPendingRef = useRef<{ storeId: string; previous: StaffNotification[]; readAt: string } | null>(null);
   const managerOversight = user.role === "MANAGER";
 
   const notify = useCallback((message: string, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast(null), 4200); }, []);
@@ -78,7 +41,13 @@ export function StaffApp({ user }: { user: Session["user"] }) {
       const response = await fetch(`/api/staff/tasks?storeId=${storeId}`, { cache: "no-store" });
       if (!response.ok) throw new Error();
       const payload = await response.json() as Payload;
-      setData(payload); await cacheStaffPayload(storeId, payload); setOnline(true);
+      const pendingRead = readPendingRef.current;
+      const pendingIds = new Set(pendingRead?.previous.filter((item) => !item.readAt).map((item) => item.id));
+      setData(pendingRead?.storeId === storeId ? {
+        ...payload,
+        notifications: payload.notifications.map((item) => !item.readAt && pendingIds.has(item.id) ? { ...item, readAt: pendingRead.readAt } : item),
+      } : payload);
+      await cacheStaffPayload(storeId, payload); setOnline(true);
     } catch {
       const cached = await getCachedStaffPayload<Payload>(storeId);
       if (cached) { setData(cached); setOnline(false); }
@@ -87,16 +56,6 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   }, [storeId, notify]);
 
   useEffect(() => { const initialLoad = window.setTimeout(() => void load(), 0); const timer = window.setInterval(() => void load(), 15_000); return () => { clearTimeout(initialLoad); clearInterval(timer); }; }, [load]);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      pushAttemptRef.current += 1;
-      pushControllerRef.current?.abort();
-      pushControllerRef.current = null;
-      pushPendingRef.current = false;
-    };
-  }, []);
   useEffect(() => {
     const sync = async () => { setOnline(navigator.onLine); if (navigator.onLine) { const result = await flushOfflineMutations(); setQueueCount(result.remaining); if (result.conflicts.length) notify("Một cập nhật offline bị xung đột. Hãy kiểm đếm lại.", true); await load(); } };
     window.addEventListener("online", sync); window.addEventListener("offline", sync); document.addEventListener("visibilitychange", sync);
@@ -142,50 +101,26 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     if (ok) { setSelected(null); setScanned(false); setScanCode(""); }
   }
 
-  async function enablePush() {
-    if (pushPendingRef.current) return;
-    const attempt = ++pushAttemptRef.current;
-    pushPendingRef.current = true;
-    setPushPending(true);
+  async function readAllNotifications(): Promise<boolean> {
+    if (!data || data.selectedStoreId !== storeId || readPendingRef.current) return false;
+    const previous = data.notifications;
+    const readAt = new Date().toISOString();
+    readPendingRef.current = { storeId, previous, readAt };
+    setData((current) => current?.selectedStoreId === storeId ? { ...current, notifications: current.notifications.map((item) => item.readAt ? item : { ...item, readAt }) } : current);
     try {
-      if (typeof Notification === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
-        throw new PushSetupError("Trình duyệt này không hỗ trợ Web Push.");
-      }
-      const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!key) throw new PushSetupError("Chưa cấu hình VAPID key trên môi trường này.");
-      let permission = Notification.permission;
-      if (permission === "denied") throw new PushSetupError("Bạn đã từ chối quyền nhận thông báo.");
-      if (permission !== "granted") permission = await Notification.requestPermission();
-      if (permission !== "granted") throw new PushSetupError("Bạn chưa cho phép nhận thông báo.");
-      const registration = await waitForServiceWorker(navigator.serviceWorker.ready);
-      if (!registration.pushManager?.subscribe) throw new PushSetupError("Trình duyệt này không hỗ trợ Web Push.");
-      const bytes = Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
-      const subscription = await waitForPushOperation(
-        registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes }),
-        "Quá thời gian tạo đăng ký Web Push. Hãy thử lại.",
-        "Không thể tạo đăng ký Web Push trên trình duyệt này.",
-      );
-      if (attempt !== pushAttemptRef.current || !mountedRef.current) return;
-      const controller = new AbortController();
-      pushControllerRef.current = controller;
-      const response = await waitForPushOperation(
-        fetch("/api/push/subscriptions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(subscription.toJSON()), signal: controller.signal }),
-        "Quá thời gian lưu đăng ký Web Push. Hãy thử lại.",
-        "Không thể lưu đăng ký Web Push. Hãy thử lại.",
-        () => controller.abort(),
-      );
-      if (attempt !== pushAttemptRef.current || !mountedRef.current) return;
-      if (!response.ok) throw new PushSetupError("Không thể lưu đăng ký Web Push. Hãy thử lại.");
-      notify("Đã bật Web Push cho thiết bị này.");
-    } catch (error) {
-      if (attempt === pushAttemptRef.current && mountedRef.current) notify(error instanceof PushSetupError ? error.message : "Không thể bật Web Push trên trình duyệt này.", true);
-    } finally {
-      if (attempt === pushAttemptRef.current) {
-        pushControllerRef.current = null;
-        pushPendingRef.current = false;
-        if (mountedRef.current) setPushPending(false);
-      }
-    }
+      const response = await fetch("/api/staff/notifications", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storeId }),
+      });
+      if (!response.ok) throw new Error("Read update failed");
+      return true;
+    } catch {
+      const previousById = new Map(previous.map((item) => [item.id, item]));
+      setData((current) => current?.selectedStoreId === storeId ? {
+        ...current,
+        notifications: current.notifications.map((item) => item.readAt === readAt ? previousById.get(item.id) || item : item),
+      } : current);
+      return false;
+    } finally { readPendingRef.current = null; }
   }
 
   async function openTask(task: Task) { setSelected(task); setScanned(false); setScanCode(task.shelf.esls[0]?.code || ""); setQuantity(Math.min(Math.max(task.inventory ? task.inventory.capacity - task.inventory.onShelf : 1, 1), task.inventory?.backroom || 1)); if(!managerOversight && ["OPEN","BLOCKED"].includes(task.status)) await mutation(`/api/staff/tasks/${task.id}/start`,{clientMutationId:uuid()},"Đã bắt đầu nhiệm vụ."); }
@@ -201,7 +136,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     <main className="app-shell">
       <aside className="sidebar"><Logo inverse /><div className="store-selector"><label>ĐANG LÀM VIỆC TẠI</label><select value={storeId} onChange={(e) => setStoreId(e.target.value)}>{data?.stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}</select></div><nav className="side-nav">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon /><span className="nav-label">{label}</span>{id === "tasks" && <span className="count" aria-label={`${activeTasks.length} nhiệm vụ đang mở`}>{activeTasks.length}</span>}</button>)}<button className={tab === "scanner" ? "active" : ""} onClick={() => setTab("scanner")}><ScanLine /><span className="nav-label">Quét ESL</span></button></nav><div className="user-card"><span className="user-avatar">{user.name?.split(" ").slice(-2).map((v) => v[0]).join("")}</span><span><strong>{user.name}</strong><small>{user.role}</small></span><button onClick={() => signOut({ callbackUrl: "/" })} aria-label="Đăng xuất"><LogOut /></button></div></aside>
       <section className="workspace">
-        <header className="workspace-header"><div><span className="section-label">{new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(new Date()).toUpperCase()}</span><h1>Chào buổi sáng, {user.name?.split(" ").at(-1)} 👋</h1><p>{data?.stores.find((store) => store.id === storeId)?.address}</p></div><div className="header-actions"><span className={`connection-pill ${online ? "" : "offline"}`}>{online ? <Wifi /> : <WifiOff />}{online ? "Đã đồng bộ" : `Offline · ${queueCount} chờ`}</span><button className="icon-button notification-button" onClick={() => void enablePush()} disabled={pushPending} aria-label={pushPending ? "Đang bật thông báo" : "Bật thông báo"}>{pushPending ? <LoaderCircle className="spin" aria-hidden="true" /> : <Bell />}{!!data?.notifications.length&&<span>{data.notifications.length}</span>}</button><button className="icon-button" onClick={() => load()} aria-label="Tải lại"><RefreshCw className={loading ? "spin" : ""} /></button><button className="icon-button mobile-logout" onClick={() => signOut({ callbackUrl: "/" })} aria-label="Đăng xuất"><LogOut /></button></div></header>
+        <header className="workspace-header"><div><span className="section-label">{new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "numeric", month: "long" }).format(new Date()).toUpperCase()}</span><h1>Chào buổi sáng, {user.name?.split(" ").at(-1)} 👋</h1><p>{data?.stores.find((store) => store.id === storeId)?.address}</p></div><div className="header-actions"><span className={`connection-pill ${online ? "" : "offline"}`}>{online ? <Wifi /> : <WifiOff />}{online ? "Đã đồng bộ" : `Offline · ${queueCount} chờ`}</span><StaffNotificationCenter key={storeId} storeId={storeId} notifications={data?.selectedStoreId === storeId ? data.notifications : []} onReadAll={readAllNotifications} /><button className="icon-button" onClick={() => load()} aria-label="Tải lại"><RefreshCw className={loading ? "spin" : ""} /></button><button className="icon-button mobile-logout" onClick={() => signOut({ callbackUrl: "/" })} aria-label="Đăng xuất"><LogOut /></button></div></header>
         {data && <div className="metric-grid"><Metric icon={ClipboardList} label="Nhiệm vụ mở" value={data.metrics.openTasks} helper={`${data.metrics.highPriority} khẩn cấp`} /><Metric icon={AlertTriangle} label="Kệ sắp hết" value={data.metrics.lowShelves} helper="Theo dữ liệu POS" alert /><Metric icon={CalendarClock} label="FEFO hôm nay" value={data.metrics.fefoTasks} helper="Nhãn/cách ly" /><Metric icon={CheckCircle2} label="Hoàn thành" value={`${data.metrics.completionRate}%`} helper="Trong ca hiện tại" /></div>}
         {tab === "overview" && <div className="dashboard-grid"><section className="panel"><PanelTitle label="CẦN XỬ LÝ" title="Nhiệm vụ ưu tiên" /><div className="task-list">{activeTasks.slice(0, 5).map((task) => <TaskRow key={task.id} task={task} managerOversight={managerOversight} onClick={() => openTask(task)} />)}{!activeTasks.length && <div className="empty-state">Bạn đã xử lý hết nhiệm vụ đang mở.</div>}</div></section><section className="panel"><PanelTitle label="LIVE DATA" title="Tình trạng kệ" /><div className="stock-list">{data?.inventories.slice(0, 6).map((item) => <div className="stock-row" key={item.id}><div className="stock-head"><strong>{item.product.name}</strong><span>{item.onShelf}/{item.capacity}</span></div><div className="stock-bar"><i className={item.onShelf <= item.lowThreshold ? "low" : ""} style={{ width: `${Math.min(100, item.onShelf / item.capacity * 100)}%` }} /></div></div>)}</div></section></div>}
         {tab === "tasks" && <section className="panel"><PanelTitle label="CÔNG VIỆC TRONG CA" title="Tất cả nhiệm vụ" /><div className="filter-row">{[["ACTIVE","Đang mở"],["RESTOCK","Bổ sung"],["FEFO","FEFO"],["QUARANTINE","Cách ly"],["COMPLETED","Hoàn thành"]].map(([id,label]) => <button key={id} className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}</div><div className="task-list">{visibleTasks.map((task) => <TaskRow key={task.id} task={task} managerOversight={managerOversight} onClick={() => openTask(task)} />)}{!visibleTasks.length && <div className="empty-state">Không có nhiệm vụ phù hợp bộ lọc.</div>}</div></section>}

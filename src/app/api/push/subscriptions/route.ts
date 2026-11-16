@@ -2,6 +2,17 @@ import { apiErrorResponse, requireUser } from "@/lib/api-auth";
 import { pushSubscriptionSchema } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
 
+export async function GET() {
+  try {
+    await requireUser();
+    const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || null;
+    const configured = Boolean(publicKey && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT);
+    return Response.json({ configured, publicKey });
+  } catch (error) {
+    return apiErrorResponse(error);
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const user = await requireUser();
