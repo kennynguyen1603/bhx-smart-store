@@ -31,6 +31,54 @@ test("customer kiosk can search and open a product route", async ({ page }) => {
   await expect(page.getByText("TRUY XUẤT NGUỒN GỐC")).toBeVisible();
 });
 
+test("printed product barcode opens the kiosk product detail and map", async ({ page }) => {
+  await page.goto("/kiosk");
+  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await page.getByRole("combobox").selectOption("NT-Q5");
+  await expect(page.getByRole("combobox")).toHaveValue("NT-Q5");
+  await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
+  await page.keyboard.type("8934673574211");
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".product-detail-info").getByRole("heading", { name: "Sữa tươi Vinamilk 100% 1L" })).toBeVisible();
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  await expect(page.locator(".map-shelf.target strong")).toHaveText("L-02");
+});
+
+test("ESL at kiosk opens the same product detail and map as its printed EAN", async ({ page }) => {
+  await page.goto("/kiosk");
+  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await page.getByRole("combobox").selectOption("NT-Q5");
+  await expect(page.getByRole("combobox")).toHaveValue("NT-Q5");
+  await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
+  await page.keyboard.type("esl-nt-q5-l-02");
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".product-detail-info").getByRole("heading", { name: "Sữa tươi Vinamilk 100% 1L" })).toBeVisible();
+  await expect(page.getByText("SƠ ĐỒ TẦNG TRỆT")).toBeVisible();
+  await expect(page.locator(".map-shelf.target strong")).toHaveText("L-02");
+});
+
+test("unknown ESL at kiosk shows friendly scanner copy while ordinary search keeps its suggestion", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/kiosk");
+  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await page.getByRole("combobox").selectOption("NT-Q5");
+  await expect(page.getByRole("combobox")).toHaveValue("NT-Q5");
+  await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
+  await page.keyboard.type("ESL-NT-Q5-Z-99");
+  await page.keyboard.press("Enter");
+
+  await expect(page.locator(".empty-state")).toHaveText("Không nhận diện được mã sản phẩm hoặc ESL tại cửa hàng này.");
+  await expect(page.locator(".map-modal")).toHaveCount(0);
+  await page.getByRole("button", { name: "Quay lại" }).click();
+  await page.getByPlaceholder(/Tìm sữa/i).fill("khong-co-san-pham");
+  await page.getByRole("button", { name: "Tìm kiếm" }).click();
+  await expect(page.locator(".empty-state")).toHaveText("Không tìm thấy sản phẩm phù hợp. Hãy thử từ khoá ngắn hơn.");
+  expect(errors).toEqual([]);
+});
+
 test("product detail cache opens immediately, reuses requests, and isolates stores", async ({ page }) => {
   let detailRequests = 0;
   let mapRequests = 0;
