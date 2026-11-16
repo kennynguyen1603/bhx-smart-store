@@ -113,7 +113,7 @@ describe("AdminMapEditor", () => {
     await pointer("pointerup", 350, 650);
     await pointer("pointerup", 350, 650);
     // Browsers follow pointerup with click; this must not select the shelf again.
-    await click(shelf());
+    await act(async () => shelf().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
     expect(onMove).toHaveBeenCalledExactlyOnceWith("a", 2, 4);
     expect(release).toHaveBeenCalledWith(7);
     expect(shelf().getAttribute("aria-pressed")).toBe("false");
@@ -152,6 +152,25 @@ describe("AdminMapEditor", () => {
   it.each(["pointercancel", "lostpointercapture"])("keeps keyboard activation after %s", async (type) => {
     await render(); await pointer("pointerdown", 250, 350); await pointer("pointermove", 350, 650); await pointer(type, 350, 650);
     await click(shelf());
+    expect(shelf().getAttribute("aria-pressed")).toBe("true");
+    expect(onMove).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("suppresses the residual pointer click after lost capture (drag=%s), then accepts keyboard activation", async (drag) => {
+    await render(); await pointer("pointerdown", 250, 350);
+    if (drag) await pointer("pointermove", 260, 360);
+    captured.clear(); await pointer("lostpointercapture", 260, 360);
+    await act(async () => shelf().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+    expect(shelf().getAttribute("aria-pressed")).toBe("false");
+    await click(shelf());
+    expect(shelf().getAttribute("aria-pressed")).toBe("true");
+    expect(onMove).not.toHaveBeenCalled();
+  });
+  it("does not consume keyboard activation or disarm a later residual pointer click after lost capture", async () => {
+    await render(); await pointer("pointerdown", 250, 350); await pointer("pointermove", 260, 360);
+    captured.clear(); await pointer("lostpointercapture", 260, 360);
+    await click(shelf());
+    expect(shelf().getAttribute("aria-pressed")).toBe("true");
+    await act(async () => shelf().dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
     expect(shelf().getAttribute("aria-pressed")).toBe("true");
     expect(onMove).not.toHaveBeenCalled();
   });

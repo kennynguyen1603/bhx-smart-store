@@ -132,8 +132,8 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
 
   function pointerCancel(event: PointerEvent<HTMLButtonElement>) {
     if (gesture.current?.pointerId !== event.pointerId) return;
-    // A cancelled pointer produces no click; do not consume the next keyboard activation.
-    suppressClick.current = false;
+    // Cancellation has no click; losing capture can still be followed by a pointer click.
+    suppressClick.current = event.type === "lostpointercapture";
     cancelGesture();
   }
 
@@ -154,8 +154,9 @@ function ShelfMap({ store, canEdit, onMove }: Props) {
         return <button type="button" key={shelf.id} className="admin-shelf-handle" aria-label={`Kệ ${shelf.code}`} aria-pressed={selected === shelf.id} aria-describedby={instructionsId} disabled={!canEdit || pending}
           style={{ left: `${position.x / store.mapWidth * 100}%`, top: `${position.y / store.mapHeight * 100}%`, width: `${shelf.width / store.mapWidth * 100}%`, height: `${shelf.height / store.mapHeight * 100}%` }}
           onPointerDown={(event) => pointerDown(event, shelf.id)} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel} onLostPointerCapture={pointerCancel}
-          onClick={() => {
-            if (suppressClick.current) { suppressClick.current = false; return; }
+          onClick={(event) => {
+            // Keyboard activation has detail=0 and must not consume a residual pointer click.
+            if (suppressClick.current && event.detail !== 0) { suppressClick.current = false; return; }
             if (!canEdit || pendingLock.current) return;
             if (selectedRef.current && selectedRef.current !== shelf.id) {
               void move(selectedRef.current, { x: shelf.x, y: shelf.y });

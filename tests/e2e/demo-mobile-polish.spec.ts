@@ -1,6 +1,9 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
+import { test } from "../fixtures/shelf-restoration";
 import nextEnv from "@next/env";
 import type { AdminMapStore } from "../../src/components/admin/admin-map-editor";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 test.setTimeout(60_000);
@@ -39,25 +42,6 @@ async function tap(page: Page, locator: Locator) {
   await page.touchscreen.tap(point.x, point.y);
 }
 
-async function withRestoredShelf(store: AdminMapStore, action: (shelf: AdminMapStore["shelves"][number]) => Promise<void>) {
-  nextEnv.loadEnvConfig(process.cwd());
-  const { prisma } = await import("../../src/lib/db");
-  const shelf = [...store.shelves].sort((a, b) => a.x - b.x || a.y - b.y)[0];
-  const original = await prisma.shelf.findUniqueOrThrow({ where: { id: shelf.id }, select: { x: true, y: true } });
-  try {
-    await action({ ...shelf, ...original });
-  } finally {
-    // Independent of page state and test assertions: always restore exact DB values.
-    try {
-      await prisma.shelf.update({ where: { id: shelf.id }, data: original });
-      const restored = await prisma.shelf.findUniqueOrThrow({ where: { id: shelf.id }, select: { x: true, y: true } });
-      expect(restored).toEqual(original);
-      console.log(`Shelf restoration ${shelf.id}: ${JSON.stringify(original)} -> ${JSON.stringify(restored)}`);
-      await test.info().attach("shelf-restoration", { body: JSON.stringify({ id: shelf.id, original, restored }), contentType: "application/json" });
-    } finally { await prisma.$disconnect(); }
-  }
-}
-
 function emptyTarget(store: AdminMapStore, shelf: AdminMapStore["shelves"][number]) {
   // Compute independently from production validation; prefer a nearby visible cell.
   for (let distance = 1; distance < store.mapHeight; distance++) {
@@ -82,7 +66,7 @@ async function persisted(page: Page, store: AdminMapStore, shelfId: string, posi
   await expect(page.getByRole("button", { name: `Kệ ${shelf.code}`, exact: true })).toHaveCSS("top", `${position.y * 50}px`);
 }
 
-test("390px Admin touch drag persists after reload and restores exact coordinates", async ({ page, context }) => {
+test("390px Admin touch drag persists after reload and restores exact coordinates", async ({ page, context, withRestoredShelf }) => {
   const store = await openMap(page);
   await withRestoredShelf(store, async (shelf) => {
     const destination = emptyTarget(store, shelf);
@@ -103,7 +87,7 @@ test("390px Admin touch drag persists after reload and restores exact coordinate
   });
 });
 
-test("390px Admin coordinate taps place a shelf and reject an occupied target inline", async ({ page }) => {
+test("390px Admin coordinate taps place a shelf and reject an occupied target inline", async ({ page, withRestoredShelf }) => {
   const store = await openMap(page);
   await withRestoredShelf(store, async (shelf) => {
     const destination = emptyTarget(store, shelf);
@@ -127,26 +111,117 @@ test("390px Admin coordinate taps place a shelf and reject an occupied target in
 });
 
 for (const key of ["Enter", "Space"]) {
-  test(`cancelled touch drag preserves next ${key} shelf activation`, async ({ page, context }) => {
-    await openMap(page);
-    const handle = page.locator(".admin-shelf-handle").first();
-    const from = await center(handle);
-    const cdp = await context.newCDPSession(page);
-    const writes: string[] = [];
-    page.on("request", (request) => { if (request.method() === "PUT") writes.push(request.url()); });
-    try {
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ ...from, id: 1 }] });
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: from.x, y: from.y + 12, id: 1 }] });
+  test(`lost capture suppresses the native residual click and preserves ${key} activation`, async ({ page, withRestoredShelf }) => {
+    const store = await openMap(page);
+    await withRestoredShelf(store, async (shelf) => {
+      const handle = page.getByRole("button", { name: `Kệ ${shelf.code}`, exact: true });
+      const writes: string[] = [];
+      page.on("request", (request) => { if (request.method() === "PUT") writes.push(request.url()); });
+      await handle.evaluate((button) => {
+        button.addEventListener("pointerdown", (event) => { (button as HTMLElement).dataset.pointerId = String((event as PointerEvent).pointerId); }, { once: true });
+        button.addEventListener("click", (event) => { (button as HTMLElement).dataset.residualClick = String((event as MouseEvent).detail); }, { once: true });
+      });
+      const from = await center(handle);
+      await page.mouse.move(from.x, from.y); await page.mouse.down();
+      await page.mouse.move(from.x, from.y + 12);
       await expect(handle).toHaveAttribute("aria-pressed", "true");
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+      await handle.evaluate((button) => button.releasePointerCapture(Number((button as HTMLElement).dataset.pointerId)));
+      await page.mouse.move(from.x, from.y + 13);
       await expect(handle).toHaveAttribute("aria-pressed", "false");
-      await handle.focus();
-      await page.keyboard.press(key);
+      await page.mouse.up();
+      await expect(handle).toHaveAttribute("data-residual-click", "1");
+      await expect(handle).toHaveAttribute("aria-pressed", "false");
+      await handle.focus(); await page.keyboard.press(key);
       await expect(handle).toHaveAttribute("aria-pressed", "true");
       expect(writes).toEqual([]);
-    } finally { await cdp.detach(); }
+    });
+  });
+  test(`cancelled touch drag preserves next ${key} shelf activation`, async ({ page, context, withRestoredShelf }) => {
+    const store = await openMap(page);
+    await withRestoredShelf(store, async (shelf) => {
+      const handle = page.getByRole("button", { name: `Kệ ${shelf.code}`, exact: true });
+      const from = await center(handle);
+      const cdp = await context.newCDPSession(page);
+      const writes: string[] = [];
+      page.on("request", (request) => { if (request.method() === "PUT") writes.push(request.url()); });
+      try {
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ ...from, id: 1 }] });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: from.x, y: from.y + 12, id: 1 }] });
+        await expect(handle).toHaveAttribute("aria-pressed", "true");
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+        await expect(handle).toHaveAttribute("aria-pressed", "false");
+        await handle.focus();
+        await page.keyboard.press(key);
+        await expect(handle).toHaveAttribute("aria-pressed", "true");
+        expect(writes).toEqual([]);
+      } finally { await cdp.detach(); }
+    });
   });
 }
+
+test("restoration waits for an outstanding delayed shelf PUT after the action rejects", async ({ page, withRestoredShelf }) => {
+  const store = await openMap(page);
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const shelf = [...store.shelves].sort((a, b) => a.x - b.x || a.y - b.y)[0];
+  const original = await prisma.shelf.findUniqueOrThrow({ where: { id: shelf.id }, select: { x: true, y: true } });
+  let settled = false;
+  let issued = false;
+  await page.route(`**/api/admin/shelves/${shelf.id}`, async (route) => {
+    issued = true;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    await route.fallback();
+  });
+  page.on("response", (response) => {
+    if (response.url().endsWith(`/api/admin/shelves/${shelf.id}`) && response.request().method() === "PUT") settled = true;
+  });
+  try {
+    await expect(withRestoredShelf(store, async () => {
+      const target = emptyTarget(store, shelf);
+      await tap(page, page.getByRole("button", { name: `Kệ ${shelf.code}`, exact: true }));
+      await tap(page, page.getByRole("button", { name: `Ô ${target.x + 1}, ${target.y + 1}`, exact: true }));
+      await expect.poll(() => issued).toBe(true);
+      throw new Error("Deliberate action failure while PUT is outstanding");
+    })).rejects.toThrow("Deliberate action failure");
+    expect(settled, "the write must settle before restoration completes").toBe(true);
+    expect(await prisma.shelf.findUniqueOrThrow({ where: { id: shelf.id }, select: { x: true, y: true } })).toEqual(original);
+  } finally { await prisma.$disconnect(); }
+});
+
+test("independent fixture teardown restores an outstanding write after a real test timeout", async ({}, testInfo) => {
+  test.setTimeout(180_000);
+  // The child must fail only for its deliberate body timeout, then finish cleanup.
+  let output = "";
+  let exitCode: unknown;
+  try {
+    await promisify(execFile)(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config=tests/fixtures/shelf-timeout.config.ts"], { timeout: 150_000 });
+  } catch (error) {
+    const failure = error as Error & { code: unknown; stdout: string };
+    exitCode = failure.code;
+    output = failure.stdout;
+  }
+  expect(exitCode).toBe(1);
+  const report = JSON.parse(output);
+  const result = report.suites[0].specs[0].tests[0].results[0];
+  expect(report.errors).toEqual([]);
+  expect(result.status).toBe("timedOut");
+  expect(result.errors).toHaveLength(1);
+  expect(result.errors[0].message).toContain("Test timeout of");
+  const attachment = result.attachments.find((item: { name: string }) => item.name === "shelf-restoration");
+  expect(attachment).toBeDefined();
+  const evidence = JSON.parse(Buffer.from(attachment.body, "base64").toString());
+  expect(evidence.outcomes).toEqual([{ id: evidence.original[0].id, outcome: "acknowledged", status: 200 }]);
+  expect(evidence.beforeRestore).not.toEqual(evidence.original);
+  expect(evidence.restored).toEqual(evidence.original);
+  expect(evidence.fixtureBudgetMs).toBe(120_000);
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  try {
+    expect(await prisma.shelf.findMany({ where: { id: { in: evidence.original.map((shelf: { id: string }) => shelf.id) } }, select: { id: true, x: true, y: true }, orderBy: { id: "asc" } })).toEqual(evidence.original);
+  } finally { await prisma.$disconnect(); }
+  console.log(`Verified real-timeout restoration: ${JSON.stringify(evidence)}`);
+  await testInfo.attach("timeout-probe-result", { body: output, contentType: "application/json" });
+});
 
 for (const role of ["staff", "manager"] as const) {
   test(`390px ${role} scanner stays active; bell is permission-free; logout works`, async ({ page }) => {
