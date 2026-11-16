@@ -1647,7 +1647,7 @@ test("push failed registration stays retry-enable after reopen, reload, and acco
   await expect(page.getByRole("button", { name: "Tắt thông báo trên thiết bị", exact: true })).toBeEnabled();
 });
 
-for (const [email, path] of [["staff@demo.bhx", "/staff"], ["manager@demo.bhx", "/staff"], ["manager@demo.bhx", "/admin"], ["admin@demo.bhx", "/admin"]]) {
+for (const [email, path] of [["staff@demo.bhx", "/staff"], ["manager@demo.bhx", "/staff"], ["manager@demo.bhx", "/admin"], ["admin@demo.bhx", "/admin"], ["admin@demo.bhx", "/staff"]]) {
   test(`task push deep link selects authorized details without mutation for ${email} at ${path}`, async ({ page }) => {
     await authenticateStaffApp(page, email);
     const response = await page.request.get("/api/staff/tasks"); expect(response.ok()).toBe(true);
@@ -1657,8 +1657,10 @@ for (const [email, path] of [["staff@demo.bhx", "/staff"], ["manager@demo.bhx", 
     const writes: string[] = [];
     page.on("request", request => { if (request.method() === "POST" && /\/api\/staff\/tasks\/[^/]+\/(start|restock|fefo)$/.test(new URL(request.url()).pathname)) writes.push(request.url()); });
     await page.goto(`${path}?storeId=${data.selectedStoreId}&task=${target.id}`);
+    const destination = email.startsWith("admin@") ? "/admin" : path;
+    await expect(page).toHaveURL(url => url.pathname === destination && url.searchParams.get("storeId") === data.selectedStoreId && url.searchParams.get("task") === target.id);
     await expect(page.locator(".store-selector select")).toHaveValue(data.selectedStoreId);
-    if (path === "/staff") {
+    if (destination === "/staff") {
       await expect(page.locator(".staff-task-modal h2")).toHaveText(target.title);
       if (email.startsWith("manager")) await expect(page.locator(".staff-task-modal")).toContainText("Chế độ chỉ xem");
     } else {

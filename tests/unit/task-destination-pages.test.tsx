@@ -19,3 +19,32 @@ it.each([["staff", StaffPage], ["admin", AdminPage]] as const)("%s preserves the
   auth.session = null;
   await expect(page({ searchParams: Promise.resolve({ storeId: "other", task: "task-2" }) })).rejects.toMatchObject({ message: `/${path}/login?callbackUrl=${encodeURIComponent(`/${path}?storeId=other&task=task-2`)}` });
 });
+
+it("translates an authenticated Admin push destination to the Admin task view", async () => {
+  auth.session!.user.role = "ADMIN";
+  await expect(StaffPage({ searchParams: Promise.resolve({ storeId: "other", task: "task-2" }) })).rejects.toMatchObject({ message: "/admin?storeId=other&task=task-2" });
+});
+it("retains Admin global-store access when translating a push link", async () => {
+  auth.session!.user.role = "ADMIN";
+  await expect(StaffPage({ searchParams: Promise.resolve({ storeId: "outside-memberships", task: "task-2" }) })).rejects.toMatchObject({ message: "/admin?storeId=outside-memberships&task=task-2" });
+});
+const adminQueries: [Record<string, string | string[] | undefined>, string][] = [
+  [{ storeId: ["other", "home"], task: ["task-2"] }, "/admin"],
+  [{ storeId: "other", task: ["task-2"] }, "/admin?storeId=other"],
+  [{ storeId: ["other"], task: "task-2" }, "/admin?task=task-2"],
+  [{ callbackUrl: "//evil.example/staff", redirect: "https://evil.example" }, "/admin"],
+  [{ storeId: "other&callbackUrl=//evil.example", task: "task-2#https://evil.example" }, "/admin?storeId=other%26callbackUrl%3D%2F%2Fevil.example&task=task-2%23https%3A%2F%2Fevil.example"],
+];
+it.each(adminQueries)("Admin translation ignores malformed fields and encodes retained values: %j", async (query, destination) => {
+  auth.session!.user.role = "ADMIN";
+  await expect(StaffPage({ searchParams: Promise.resolve({ ...query }) })).rejects.toMatchObject({ message: destination });
+});
+it.each(["STAFF", "MANAGER"] as const)("keeps %s forbidden-store task context out of the Staff app", async role => {
+  auth.session!.user.role = role;
+  const result = await StaffPage({ searchParams: Promise.resolve({ storeId: "forbidden", task: "secret" }) });
+  expect(result.props).toMatchObject({ initialStoreId: undefined, initialTaskId: undefined });
+});
+it("does not translate a Staff account into an Admin task context", async () => {
+  auth.session!.user.role = "STAFF";
+  await expect(AdminPage({ searchParams: Promise.resolve({ storeId: "other", task: "task-2" }) })).rejects.toMatchObject({ message: "/staff" });
+});

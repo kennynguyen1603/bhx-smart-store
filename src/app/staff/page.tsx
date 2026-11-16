@@ -14,7 +14,7 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
   const destination = new URLSearchParams({ ...(requestedStore ? { storeId: requestedStore } : {}), ...(requestedTask ? { task: requestedTask } : {}) });
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect(`/staff/login?callbackUrl=${encodeURIComponent(`/staff${destination.size ? `?${destination}` : ""}`)}`);
-  if (!isRoleAllowedForAudience(session.user.role, "staff")) redirect("/admin");
+  if (!isRoleAllowedForAudience(session.user.role, "staff")) redirect(`/admin${destination.size ? `?${destination}` : ""}`);
   const authorized = !requestedStore || session.user.role === "ADMIN" || session.user.storeIds.includes(requestedStore);
   return <StaffApp key={`${session.user.id}:${destination}`} user={session.user} initialStoreId={authorized ? requestedStore : undefined} initialTaskId={authorized ? requestedTask : undefined} />;
 }
