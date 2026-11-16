@@ -9,25 +9,23 @@ export async function GET(request: Request) {
   const storeCode = url.searchParams.get("storeCode") || "NT-Q5";
   const rawQuery = (url.searchParams.get("q") || "").trim();
   const query = normalizeSearch(rawQuery);
+  const exact = url.searchParams.get("exact") === "1";
   const category = url.searchParams.get("category");
   const store = await prisma.store.findUnique({ where: { code: storeCode }, select: { id: true, code: true, name: true, address: true, timeZone: true } });
   if (!store) return Response.json({ error: { code: "STORE_NOT_FOUND", message: "Không tìm thấy cửa hàng" } }, { status: 404 });
+  if (exact && !rawQuery) return Response.json({ store, products: [] });
   const esl = rawQuery ? await prisma.eSL.findFirst({
     where: { storeId: store.id, code: { equals: rawQuery, mode: "insensitive" } },
     select: { shelfId: true, productId: true },
   }) : null;
-  // Complete printed ESL codes must never fall back to a product's search text.
-  // Partial codes still use the normal text search below.
-  if (!esl && /^ESL-[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+-\d{2}$/i.test(rawQuery)) {
-    return Response.json({ store, products: [] });
-  }
   const inventories = await prisma.inventory.findMany({
     where: {
       storeId: store.id,
       ...(esl ? { shelfId: esl.shelfId, productId: esl.productId } : {}),
       product: {
         active: true,
-        ...(!esl && query ? { searchText: { contains: query } } : {}),
+        ...(!esl && exact ? { barcode: { equals: rawQuery, mode: "insensitive" } } : {}),
+        ...(!esl && !exact && query ? { searchText: { contains: query } } : {}),
         ...(category ? { category } : {}),
       },
     },

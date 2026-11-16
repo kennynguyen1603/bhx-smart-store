@@ -13,7 +13,7 @@ import { GET } from "@/app/api/kiosk/products/search/route";
 const store = { id: "store-1", code: "NT-Q5", name: "Store", address: "Address", timeZone: "Asia/Ho_Chi_Minh" };
 const product = {
   id: "milk", sku: "MILK-1L", barcode: "8934673574211", name: "Sữa tươi Vinamilk 100% 1L", category: "Sữa & đồ lạnh",
-  active: true, searchText: "sua tuoi 8934673574211 esl-nt-q5-z-99 esl-lvv-td-l-02 esl-nt",
+  active: true, searchText: "sua tuoi 8934673574211 esl-nt-q5-z-99 esl-lvv-td-l-02 esl-nt esl-one esl-missing label-a",
   basePriceVnd: 32_600, emoji: "🥛",
   lots: [{ status: "MARKED_DOWN", quantity: 4, expiryDate: new Date("2026-11-16"), markdownPercent: 20, markdownPriceVnd: 26_080 }],
 };
@@ -22,7 +22,7 @@ const inventory = { storeId: store.id, shelfId: shelf.id, productId: product.id,
 const inventories = [
   inventory,
   { ...inventory, shelfId: "shelf-2", shelf: { ...shelf, id: "shelf-2", code: "L-03" } },
-  { ...inventory, productId: "other", product: { ...product, id: "other", searchText: "esl-nt" } },
+  { ...inventory, productId: "other", product: { ...product, id: "other", barcode: "8934673103220", searchText: "esl-nt" } },
   { ...inventory, storeId: "store-2" },
   { ...inventory, productId: "inactive", product: { ...product, id: "inactive", active: false } },
 ];
@@ -35,24 +35,27 @@ beforeEach(() => {
   db.store.findUnique.mockResolvedValue(store);
   db.eSL.findFirst.mockImplementation(async ({ where }: Prisma.ESLFindFirstArgs) => {
     const code = where?.code as Prisma.StringFilter;
-    return where?.storeId === esl.storeId && code?.equals?.toLowerCase() === esl.code.toLowerCase() && code.mode === "insensitive" ? esl : null;
+    return [esl, { ...esl, code: "LABEL-A" }, { ...esl, storeId: "store-2", code: "ESL-ONE" }].find((label) =>
+      where?.storeId === label.storeId && code?.equals?.toLowerCase() === label.code.toLowerCase() && code.mode === "insensitive") || null;
   });
   // The database boundary enforces emitted filters against adversarial inventory rows.
   db.inventory.findMany.mockImplementation(async ({ where }: Prisma.InventoryFindManyArgs) => {
     const filter = where?.product as Prisma.ProductWhereInput;
     const text = (filter?.searchText as Prisma.StringFilter)?.contains;
+    const barcode = (filter?.barcode as Prisma.StringFilter)?.equals;
     return inventories.filter((row) => row.storeId === where?.storeId
       && (!where?.shelfId || row.shelfId === where.shelfId)
       && (!where?.productId || row.productId === where.productId)
       && row.product.active === filter?.active
       && (!filter?.category || row.product.category === filter.category)
-      && (!text || row.product.searchText.includes(text)));
+      && (!text || row.product.searchText.includes(text))
+      && (barcode === undefined || row.product.barcode.toLowerCase() === barcode.toLowerCase()));
   });
 });
 afterEach(() => vi.useRealTimers());
 
-async function search(q: string, category?: string) {
-  const params = new URLSearchParams({ storeCode: store.code, q, ...(category ? { category } : {}) });
+async function search(q: string, category?: string, exact = false) {
+  const params = new URLSearchParams({ storeCode: store.code, q, ...(category ? { category } : {}), ...(exact ? { exact: "1" } : {}) });
   const response = await GET(new Request(`http://localhost/api/kiosk/products/search?${params}`));
   expect(response.status).toBe(200);
   return response.json();
@@ -71,7 +74,7 @@ it("does not resolve a partial ESL as an exact label and keeps text search store
 });
 
 it.each(["ESL-LVV-TD-L-02", "ESL-NT-Q5-Z-99"])("returns no product for cross-store or unknown label %s even when product text contains it", async (code) => {
-  expect((await search(code)).products).toEqual([]);
+  expect((await search(code, undefined, true)).products).toEqual([]);
 });
 
 it("keeps category filtering for an exact ESL", async () => {
@@ -100,4 +103,26 @@ it("preserves the missing-store error contract", async () => {
   const response = await GET(new Request("http://localhost/api/kiosk/products/search?storeCode=missing&q=ESL-NT-Q5-L-02"));
   expect(response.status).toBe(404);
   expect(await response.json()).toEqual({ error: { code: "STORE_NOT_FOUND", message: "Không tìm thấy cửa hàng" } });
+});
+
+
+it("resolves an arbitrary persisted ESL code on an exact scan", async () => {
+  expect((await search(" label-a ", undefined, true)).products).toEqual([(await search(esl.code)).products[0]]);
+});
+
+it.each(["ESL-ONE", "ESL-MISSING"])("never falls back to substring text for arbitrary cross-store/unknown exact scan %s", async (code) => {
+  expect((await search(code, undefined, true)).products).toEqual([]);
+});
+
+it("uses exact product barcode equality for scans while ordinary partial typing keeps text search", async () => {
+  expect((await search("8934673574211", undefined, true)).products.map((row: { id: string }) => row.id)).toEqual(["milk", "milk"]);
+  expect((await search("893467", undefined, true)).products).toEqual([]);
+  expect((await search("893467")).products).toHaveLength(2);
+  expect((await search("ESL-ONE", "Sữa & đồ lạnh")).products).toHaveLength(2);
+  expect((await search("ESL-ONE", "Rau củ & trái cây")).products).toEqual([]);
+  expect((await search("ESL-NT-Q5-Z-99")).products).toHaveLength(2);
+});
+
+it("does not expose the whole catalog for an empty exact scan", async () => {
+  expect((await search("", undefined, true)).products).toEqual([]);
 });

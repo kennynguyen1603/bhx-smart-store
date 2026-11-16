@@ -7,6 +7,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const { id } = await context.params;
   const url = new URL(request.url);
   const storeCode = url.searchParams.get("storeCode") || "NT-Q5";
+  const shelfId = url.searchParams.get("shelfId");
   const store = await prisma.store.findUnique({
     where: { code: storeCode },
     select: { id: true, timeZone: true },
@@ -14,7 +15,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (!store) return Response.json({ error: { code: "STORE_NOT_FOUND", message: "Không tìm thấy cửa hàng" } }, { status: 404 });
   const product = await prisma.product.findFirst({ where: { OR: [{ id }, { sku: id }, { barcode: id }] } });
   if (!product) return Response.json({ error: { code: "PRODUCT_NOT_FOUND", message: "Không tìm thấy sản phẩm" } }, { status: 404 });
-  const inventory = await prisma.inventory.findFirst({ where: { storeId: store.id, productId: product.id }, include: { shelf: { include: { zone: true } } } });
+  const inventory = await prisma.inventory.findFirst({ where: { storeId: store.id, productId: product.id, ...(shelfId ? { shelfId } : {}) }, include: { shelf: { include: { zone: true } } } });
   if (!inventory) return Response.json({ error: { code: "NOT_SOLD_HERE", message: "Sản phẩm không có tại chi nhánh này" } }, { status: 404 });
   const lots = await prisma.lot.findMany({
     where: { storeId: store.id, productId: product.id, quantity: { gt: 0 }, status: { in: ["AVAILABLE", "MARKED_DOWN"] } },

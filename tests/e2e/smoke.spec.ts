@@ -79,6 +79,56 @@ test("unknown ESL at kiosk shows friendly scanner copy while ordinary search kee
   expect(errors).toEqual([]);
 });
 
+test("exact ESL at kiosk does not treat a scanned substring as a product search", async ({ page }) => {
+  await page.goto("/kiosk");
+  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
+  await page.keyboard.type("893467357");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".empty-state")).toHaveText("Không nhận diện được mã sản phẩm hoặc ESL tại cửa hàng này.");
+  await expect(page.locator(".map-modal")).toHaveCount(0);
+});
+
+test("custom ESL at kiosk retains a second shelf through detail map and cache", async ({ page }) => {
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const store = await prisma.store.findUniqueOrThrow({ where: { code: "NT-Q5" } });
+  const product = await prisma.product.findUniqueOrThrow({ where: { sku: "MILK-1L" } });
+  const secondShelf = await prisma.shelf.findFirstOrThrow({ where: { storeId: store.id, code: "L-04" } });
+  const extraInventory = await prisma.inventory.create({ data: { storeId: store.id, productId: product.id, shelfId: secondShelf.id, onShelf: 5, backroom: 0, capacity: 18, lowThreshold: 2 } });
+  const customCode = `CUSTOM-LABEL-${Date.now()}`;
+  // Keep duplicate development bootstrap effects on this fixture's selected store.
+  await page.route("**/api/kiosk/bootstrap", (route) => route.fulfill({ json: { stores: [{ id: store.id, code: store.code, name: store.name, address: store.address }], categories: [] } }));
+  const detailShelves: (string | null)[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === `/api/kiosk/products/${product.id}`) detailShelves.push(url.searchParams.get("shelfId"));
+  });
+  try {
+    await prisma.eSL.create({ data: { code: customCode, storeId: store.id, productId: product.id, shelfId: secondShelf.id } });
+    await page.goto("/kiosk");
+    await expect(page.getByRole("combobox")).not.toHaveValue("");
+    await page.getByRole("combobox").selectOption("NT-Q5");
+    await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
+
+    for (const [code, expectedShelf] of [["ESL-NT-Q5-L-02", "L-02"], [customCode, "L-04"], ["ESL-NT-Q5-L-02", "L-02"], [customCode, "L-04"]]) {
+      await page.locator(".kiosk-main h1, .kiosk-main h2").first().click();
+      await page.keyboard.type(code);
+      await page.keyboard.press("Enter");
+      await expect(page.locator(".product-detail-info").getByRole("heading", { name: "Sữa tươi Vinamilk 100% 1L" })).toBeVisible();
+      await expect(page.locator(".map-shelf.target strong")).toHaveText(expectedShelf);
+      await page.getByRole("button", { name: "Đóng chi tiết" }).click();
+    }
+    expect(detailShelves).toHaveLength(2);
+    expect(detailShelves[0]).toBeTruthy();
+    expect(detailShelves[1]).toBe(secondShelf.id);
+    expect(detailShelves[0]).not.toBe(secondShelf.id);
+  } finally {
+    await prisma.eSL.deleteMany({ where: { code: customCode } });
+    await prisma.inventory.delete({ where: { id: extraInventory.id } });
+  }
+});
+
 test("product detail cache opens immediately, reuses requests, and isolates stores", async ({ page }) => {
   let detailRequests = 0;
   let mapRequests = 0;

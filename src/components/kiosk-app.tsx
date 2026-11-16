@@ -47,7 +47,8 @@ export function KioskApp() {
     setQuery(""); setProducts([]); setResults(false); setScanMiss(false); setSearchLoading(false); closeDetail(); setSeconds(120);
   }, [closeDetail]);
   const loadDetail = useCallback(async (product: Product) => {
-    const detailKey = `detail:${storeCode}:${product.id}`;
+    const detailKey = `detail:${storeCode}:${product.id}:${product.shelf.id}`;
+    const detailParams = new URLSearchParams({ storeCode, shelfId: product.shelf.id });
     const mapKey = `map:${storeCode}`;
     const loadJson = async (url: string) => {
       const response = await fetch(url);
@@ -55,7 +56,7 @@ export function KioskApp() {
       return response.json() as Promise<CachedPayload>;
     };
     const [detailResult, mapResult] = await Promise.all([
-      detailCache.get(detailKey, () => loadJson(`/api/kiosk/products/${product.id}?storeCode=${storeCode}`)) as Promise<DetailResponse>,
+      detailCache.get(detailKey, () => loadJson(`/api/kiosk/products/${product.id}?${detailParams}`)) as Promise<DetailResponse>,
       detailCache.get(mapKey, () => loadJson(`/api/kiosk/stores/${storeCode}/map`)) as Promise<StoreMap>,
     ]);
     const shelf = detailResult.product.shelf;
@@ -86,6 +87,7 @@ export function KioskApp() {
     const params = new URLSearchParams({ storeCode });
     if (value) params.set("q", value);
     if (category) params.set("category", category);
+    if (openExact) params.set("exact", "1");
     const response = await fetch(`/api/kiosk/products/search?${params}`);
     const result = await response.json();
     if (request !== searchRequest.current) return;
