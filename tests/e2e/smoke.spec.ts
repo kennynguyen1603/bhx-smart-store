@@ -367,6 +367,69 @@ test("mobile kiosk maps yogurt to its own shelf without horizontal overflow", as
   expect(layout).toEqual({ pageOverflow: 0, modalOverflow: 0 });
 });
 
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 844, height: 390 },
+  { width: 768, height: 1024 },
+  { width: 1024, height: 768 },
+]) {
+  test(`kiosk product detail scrolls at ${viewport.width}x${viewport.height}`, async ({ page }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/kiosk");
+    await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
+    await page.getByRole("button", { name: "Tìm kiếm" }).click();
+    await page.locator(".product-card").filter({ hasText: "Sữa tươi Vinamilk 100% 1L" }).click();
+
+    const modal = page.locator(".map-modal");
+    const traceRows = modal.locator(".trace-row");
+    await expect(traceRows.first()).toBeAttached();
+    await expect(modal.getByText("TRUY XUẤT NGUỒN GỐC", { exact: true })).toBeVisible();
+    const layout = await modal.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      modalOverflow: element.scrollWidth - element.clientWidth,
+      overflowY: getComputedStyle(element).overflowY,
+    }));
+    console.info(`${viewport.width}x${viewport.height} modal: ${JSON.stringify(layout)}`);
+    expect(layout.pageOverflow).toBe(0);
+    expect(layout.modalOverflow).toBe(0);
+    await testInfo.attach("detail-before-scroll", { body: await page.screenshot({ path: testInfo.outputPath("before-scroll.png") }), contentType: "image/png" });
+
+    const bounds = await modal.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    if (layout.scrollHeight > layout.clientHeight) {
+      // Native wheel input catches overflow:hidden, which programmatic scrolling can bypass.
+      await page.mouse.wheel(0, 120);
+      await expect.poll(() => modal.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    }
+
+    for (const target of [
+      modal.getByText("TRUY XUẤT NGUỒN GỐC", { exact: true }),
+      ...await traceRows.all(),
+      modal.getByRole("button", { name: "Tôi đã biết đường", exact: true }),
+    ]) {
+      await expect.poll(async () => {
+        // Incremental wheel input keeps every row reachable without forcing scrollTop.
+        const delta = await target.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const container = element.closest(".map-modal")!.getBoundingClientRect();
+          if (rect.top < container.top) return -80;
+          if (rect.bottom > container.bottom) return 80;
+          return 0;
+        });
+        if (delta) await page.mouse.wheel(0, delta);
+        return delta;
+      }, { intervals: [100] }).toBe(0);
+      await expect(target).toBeInViewport({ ratio: 1 });
+    }
+    await testInfo.attach("detail-after-scroll", { body: await page.screenshot({ path: testInfo.outputPath("after-scroll.png") }), contentType: "image/png" });
+    await modal.getByRole("button", { name: "Tôi đã biết đường", exact: true }).click();
+    await expect(modal).toHaveCount(0);
+  });
+}
+
 test("kiosk exposes the expanded catalog and finds Vietnamese text without accents", async ({ page }) => {
   await page.goto("/kiosk");
   await expect(page.locator(".category-grid button")).toHaveCount(7);
