@@ -84,6 +84,10 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .admin-esl-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; }
 .admin-esl-row > span { min-width: 0; overflow-wrap: anywhere; }
 
+/* Integration simulations share one pending lifecycle through their overview refresh. */
+.integration-actions { display: grid; gap: 9px; }
+.integration-scope { font-size: 9px; line-height: 1.6; }
+
 /* Staff header actions stay reachable above page content and below full-screen dialogs. */
 .header-actions { position: relative; z-index: 60; flex-wrap: wrap; justify-content: flex-end; }
 .header-actions .icon-button { flex: 0 0 44px; width: 44px; height: 44px; }

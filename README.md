@@ -105,11 +105,19 @@ GitHub Actions chạy PostgreSQL service, migration, seed, lint, typecheck, unit
 
 - **Staff** chỉ thấy nhiệm vụ chưa được nhận hoặc do chính mình nhận; lịch sử và số liệu không lộ nhiệm vụ riêng của Staff khác. Khi hai Staff cùng nhận một nhiệm vụ, chỉ một người trở thành người phụ trách.
 - **Manager** thấy toàn bộ nhiệm vụ của cửa hàng, gồm người phụ trách và thời điểm hoàn thành để giám sát. Giao diện Manager không cung cấp thao tác thực thi/hoàn thành nhiệm vụ thay Staff.
+- **Quét ESL** là một tab ứng dụng độc lập cho cả Staff và Manager: trang nhiệm vụ được gỡ khỏi màn hình khi tab ESL hoạt động, đóng ESL trở về Tổng quan, và chọn nhiệm vụ chuyển đúng sang luồng nhiệm vụ.
+- Trên màn hình di động, nút thông báo và đăng xuất có vùng chạm tối thiểu 44×44px, không co hoặc chồng lấp. Thiết lập Web Push hiển thị trạng thái chờ, chặn nhấp lặp, chỉ báo thành công sau khi máy chủ lưu đăng ký, và luôn cho phép thử lại sau lỗi.
+
+### Biểu mẫu Admin và mô phỏng tích hợp
+
+- Các thao tác tạo/sửa/xóa trong Admin dùng dialog shadcn-style dựa trên Radix, React Hook Form và Zod thay cho `prompt()`/`confirm()`. Lỗi trường hiển thị bằng tiếng Việt; dialog giữ nguyên dữ liệu khi lỗi và chỉ đóng sau khi ghi thành công.
+- POS, WMS, Supplier và FEFO dùng chung trạng thái chờ: nút đang chạy có spinner cùng nhãn `Đang xử lý…`, toàn bộ nút mô phỏng bị khóa từ lúc bắt đầu ghi đến khi lần tải lại tổng quan kết thúc.
+- Ghi thành công và tải lại thất bại là hai kết quả riêng. Hệ thống vẫn xác nhận thao tác đã hoàn tất, cảnh báo dữ liệu hiển thị có thể cũ, và chỉ thử lại lượt đọc nên không phát lại thao tác ghi. Mô phỏng FEFO giữ nguyên phạm vi toàn cục và chạy cho tất cả cửa hàng đang hoạt động.
 
 ### Cache/prefetch kiosk trong phiên
 
 - Di chuột, focus hoặc chạm vào thẻ sản phẩm sẽ prefetch chi tiết và sơ đồ; lần mở tiếp theo dùng lại request đang chạy hoặc dữ liệu đã tải trong tối đa 60 giây.
-- Cache chỉ là `Map` trong bộ nhớ của phiên kiosk hiện tại, được tách theo cửa hàng và bị xóa khi đổi cửa hàng hoặc phiên tự động reset. Request lỗi bị loại để lần thử lại có thể tải mới.
+- Cache sản phẩm chỉ là `Map` trong bộ nhớ của phiên kiosk hiện tại, được tách theo cửa hàng và bị xóa khi đổi cửa hàng hoặc phiên tự động reset. Request lỗi bị loại để lần thử lại có thể tải mới.
 - Demo không dùng Redis, cache chia sẻ, `localStorage`, IndexedDB, SWR hoặc React Query cho tối ưu này.
 
 ## Deploy Vercel + Neon

@@ -854,3 +854,55 @@ test("Admin destructive actions cancel without requests and confirm once with pe
   await page.mouse.click(5, 5); await expect(dialog).toBeVisible();
   release(); await expect(dialog).toHaveCount(0); expect(writes).toBe(1); expect(native).toEqual([]); await expect(trigger).toBeFocused();
 });
+
+test("integration loading blocks duplicate writes until the overview refresh attempt finishes", async ({ page }) => {
+  const { overview } = await import("../fixtures/admin-core");
+  let readCount = 0;
+  let writeCount = 0;
+  let releaseWrite!: () => void;
+  let releaseRefresh!: () => void;
+  const writeGate = new Promise<void>((resolve) => { releaseWrite = resolve; });
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  await page.route("**/api/admin/overview**", async (route) => {
+    readCount += 1;
+    if (readCount > 1) {
+      await refreshGate;
+      await route.fulfill({ status: 503, json: {} });
+      return;
+    }
+    await route.fulfill({ json: overview });
+  });
+  await page.route("**/api/admin/simulate", async (route) => {
+    writeCount += 1;
+    await writeGate;
+    await route.fulfill({ json: { ok: true } });
+  });
+
+  await signInAdmin(page);
+  await page.getByRole("button", { name: "Tích hợp", exact: true }).click();
+  const simulator = page.locator("section.panel").filter({ hasText: "Mô phỏng dữ liệu đầu vào" });
+  const action = simulator.getByRole("button", { name: "POS bán 2 sản phẩm", exact: true });
+  await action.evaluate((element) => {
+    (element as HTMLButtonElement).click();
+    (element as HTMLButtonElement).click();
+  });
+
+  await expect.poll(() => writeCount).toBe(1);
+  const pending = simulator.getByRole("button", { name: "Đang xử lý…", exact: true });
+  await expect(pending).toBeDisabled();
+  await expect(pending.locator(".ui-spinner")).toBeVisible();
+  await expect(simulator.getByRole("button")).toHaveCount(4);
+  expect(await simulator.getByRole("button").evaluateAll((buttons) => buttons.every((button) => (button as HTMLButtonElement).disabled))).toBe(true);
+
+  releaseWrite();
+  await expect(page.getByText("Đã cập nhật dữ liệu.", { exact: true })).toBeVisible();
+  await expect.poll(() => readCount).toBe(2);
+  await expect(pending).toBeDisabled();
+  expect(writeCount).toBe(1);
+
+  releaseRefresh();
+  await expect(page.getByText(/Đã lưu thay đổi nhưng không thể tải lại dữ liệu/)).toBeVisible();
+  await expect(action).toBeEnabled();
+  expect(await simulator.getByRole("button").evaluateAll((buttons) => buttons.every((button) => !(button as HTMLButtonElement).disabled))).toBe(true);
+  expect(writeCount).toBe(1);
+});
