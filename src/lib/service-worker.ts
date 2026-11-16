@@ -12,7 +12,12 @@ export function isLocalServiceWorkerHost(hostname: string): boolean {
 export async function ensureServiceWorkerRegistration(
   container?: ServiceWorkerContainer,
 ): Promise<ServiceWorkerRegistrationResult> {
-  const serviceWorker = container ?? (typeof navigator !== "undefined" ? navigator.serviceWorker : undefined);
+  let serviceWorker: ServiceWorkerContainer | undefined;
+  try {
+    serviceWorker = container ?? (typeof navigator !== "undefined" ? navigator.serviceWorker : undefined);
+  } catch {
+    return { ok: false, reason: "registration-failed" };
+  }
   if (!serviceWorker) return { ok: false, reason: "unsupported" };
   if (!globalThis.isSecureContext) return { ok: false, reason: "insecure-context" };
 

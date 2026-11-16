@@ -29,6 +29,15 @@ describe("service-worker registration", () => {
     await expect(ensureServiceWorkerRegistration()).resolves.toEqual({ ok: false, reason: "unsupported" });
   });
 
+  it("returns a structured failure when the serviceWorker getter throws SecurityError", async () => {
+    vi.stubGlobal("navigator", {
+      get serviceWorker() {
+        throw new DOMException("Service workers are blocked in this sandbox", "SecurityError");
+      },
+    });
+    await expect(ensureServiceWorkerRegistration()).resolves.toEqual({ ok: false, reason: "registration-failed" });
+  });
+
   it("rejects insecure contexts before contacting the container", async () => {
     vi.stubGlobal("isSecureContext", false);
     const sw = container();
