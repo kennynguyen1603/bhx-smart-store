@@ -201,23 +201,28 @@ describe("Staff Web Push lifecycle", () => {
     expectIdle();
   });
 
-  it("disables duplicate clicks with an accessible spinner label and succeeds only after an OK POST", async () => {
-    let resolveSubscription!: (value: PushSubscriptionDouble) => void;
-    const pendingSubscription = new Promise<PushSubscriptionDouble>((resolve) => { resolveSubscription = resolve; });
-    const subscribe = vi.fn(() => pendingSubscription);
+  it("guards same-tick clicks and withholds success until a deferred POST resolves OK", async () => {
+    let resolvePost!: (response: Response) => void;
+    const pendingPost = new Promise<Response>((resolve) => { resolvePost = resolve; });
+    pushRequest = () => pendingPost;
+    const subscribe = vi.fn(async () => subscription());
     installPushApis({ ready: Promise.resolve({ pushManager: { subscribe } }) });
 
-    await act(async () => {
-      pushButton().click();
-      await Promise.resolve();
+    act(() => {
+      const button = pushButton();
+      button.click();
+      button.click();
     });
+    await flushPromises();
+
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(pushPosts()).toHaveLength(1);
     expect(pushButton().disabled).toBe(true);
     expect(pushButton().getAttribute("aria-label")).toBe("Đang bật thông báo");
     expect(pushButton().querySelector(".spin")).not.toBeNull();
-    pushButton().click();
-    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("Đã bật Web Push cho thiết bị này.");
 
-    await act(async () => resolveSubscription(subscription()));
+    await act(async () => resolvePost(new Response(null, { status: 201 })));
     await flushPromises();
 
     expect(pushPosts()).toHaveLength(1);

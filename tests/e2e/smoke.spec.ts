@@ -670,6 +670,7 @@ test("mobile notification remains topmost and clickable at supported widths", as
     if (index === 0) {
       await expect(page.getByRole("button", { name: "Đang bật thông báo" })).toBeDisabled();
       await expect(notification.locator(".spin")).toBeVisible();
+      expect(await page.getByText("Đã bật Web Push cho thiết bị này.").count()).toBe(0);
       releaseFirstPost();
     }
     await expect(page.getByText("Đã bật Web Push cho thiết bị này.")).toBeVisible();
