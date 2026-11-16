@@ -355,7 +355,15 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
       // The rule was validated before claiming the task; discounts replace the current price.
       if (!rule) throw new ApiError(422, "Không có quy tắc FEFO phù hợp", "FEFO_RULE_NOT_FOUND");
       const markdownPriceVnd = Math.round((task.product.basePriceVnd * (100 - rule.discountPercent)) / 100);
-      lot = await tx.lot.update({ where: { id: task.lot.id }, data: { status: LotStatus.MARKED_DOWN, markdownPercent: rule.discountPercent, markdownPriceVnd } });
+      // Different tasks can target one lot, so validate its current discount atomically.
+      const upgraded = await tx.lot.updateMany({
+        where: { id: task.lot.id, OR: [{ markdownPercent: null }, { markdownPercent: { lt: rule.discountPercent } }] },
+        data: { status: LotStatus.MARKED_DOWN, markdownPercent: rule.discountPercent, markdownPriceVnd },
+      });
+      if (upgraded.count !== 1) {
+        throw new ApiError(409, "Lô đã có mức giảm giá bằng hoặc cao hơn quy tắc hiện tại", "MARKDOWN_NOT_UPGRADABLE");
+      }
+      lot = await tx.lot.findUniqueOrThrow({ where: { id: task.lot.id } });
       await tx.markdown.create({ data: { lotId: lot.id, discountPercent: rule.discountPercent, originalPriceVnd: task.product.basePriceVnd, markdownPriceVnd } });
     }
     const updatedTask = await tx.task.update({ where: { id: task.id }, data: { note: quarantine ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });

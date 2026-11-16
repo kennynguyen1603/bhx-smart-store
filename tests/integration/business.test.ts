@@ -304,7 +304,10 @@ describe("FEFO engine", () => {
     expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "FEFO_MARKDOWN" } })).toBe(0);
   });
 
-  it("atomically completes FEFO once for concurrent Admin requests with different mutation IDs", async () => {
+  it.each([
+    { scope: "the same task", distinctTasks: false },
+    { scope: "two distinct tasks for the same lot", distinctTasks: true },
+  ])("atomically completes FEFO once for concurrent Admin requests on $scope", async ({ distinctTasks }) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
     const expiryDate = new Date();
@@ -315,6 +318,9 @@ describe("FEFO engine", () => {
     const task = await prisma.task.create({
       data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, lotId: lot.id, type: TaskType.FEFO, status: TaskStatus.OPEN, title: "Competing Admin FEFO completion" },
     });
+    const tasks = [task, distinctTasks ? await prisma.task.create({
+      data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, lotId: lot.id, type: TaskType.FEFO, status: TaskStatus.OPEN, title: "Second task for the same lot" },
+    }) : task];
     let reads = 0;
     let releaseReads!: () => void;
     const bothTasksRead = new Promise<void>((resolve) => { releaseReads = resolve; });
@@ -328,7 +334,7 @@ describe("FEFO engine", () => {
             if (property !== "findUnique") return Reflect.get(target, property);
             return async (args: Prisma.TaskFindUniqueArgs) => {
               const snapshot = await tx.task.findUnique(args);
-              if (args.where.id === task.id) {
+              if (tasks.some((candidate) => candidate.id === args.where.id)) {
                 reads += 1;
                 if (reads === 2) releaseReads();
                 await bothTasksRead;
@@ -348,22 +354,28 @@ describe("FEFO engine", () => {
     const mutationIds = [randomUUID(), randomUUID()];
 
     try {
-      const results = await Promise.allSettled(mutationIds.map((id) => completeFefoTask(task.id, user, id)));
+      const results = await Promise.allSettled(mutationIds.map((id, index) => completeFefoTask(tasks[index].id, user, id)));
 
       transaction.mockRestore();
       expect(reads).toBe(2);
       expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
       const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-      expect(rejected?.reason).toMatchObject({ status: 409, code: "INVALID_TASK_STATE" } satisfies Partial<ApiError>);
-      expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: TaskStatus.COMPLETED, assigneeId: user.id });
+      expect(rejected?.reason).toMatchObject({ status: 409, code: distinctTasks ? "MARKDOWN_NOT_UPGRADABLE" : "INVALID_TASK_STATE" } satisfies Partial<ApiError>);
+      const winnerIndex = results.findIndex((result) => result.status === "fulfilled");
+      const winningTask = tasks[winnerIndex];
+      expect(await prisma.task.findUniqueOrThrow({ where: { id: winningTask.id } })).toMatchObject({ status: TaskStatus.COMPLETED, assigneeId: user.id });
+      if (distinctTasks) {
+        const losingTask = tasks[1 - winnerIndex];
+        expect(await prisma.task.findUniqueOrThrow({ where: { id: losingTask.id } })).toEqual(losingTask);
+        expect(await prisma.taskEvent.count({ where: { taskId: losingTask.id } })).toBe(0);
+      }
       expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "MARKED_DOWN", markdownPercent: 30, markdownPriceVnd: 7_000 });
       expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(1);
-      expect(await prisma.taskEvent.count({ where: { taskId: task.id, type: "COMPLETED" } })).toBe(1);
+      expect(await prisma.taskEvent.count({ where: { taskId: { in: tasks.map((candidate) => candidate.id) }, type: "COMPLETED" } })).toBe(1);
       expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "FEFO_MARKDOWN" } })).toBe(1);
       expect(await prisma.mutationReceipt.count({ where: { clientMutationId: { in: mutationIds } } })).toBe(1);
-      const winnerIndex = results.findIndex((result) => result.status === "fulfilled");
-      await expect(completeFefoTask(task.id, user, mutationIds[winnerIndex])).resolves.toEqual((results[winnerIndex] as PromiseFulfilledResult<unknown>).value);
-      await expect(completeFefoTask(task.id, user, randomUUID())).rejects.toMatchObject({ status: 409, code: "INVALID_TASK_STATE" });
+      await expect(completeFefoTask(winningTask.id, user, mutationIds[winnerIndex])).resolves.toEqual((results[winnerIndex] as PromiseFulfilledResult<unknown>).value);
+      await expect(completeFefoTask(winningTask.id, user, randomUUID())).rejects.toMatchObject({ status: 409, code: "INVALID_TASK_STATE" });
       expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(1);
     } finally {
       transaction.mockRestore();
