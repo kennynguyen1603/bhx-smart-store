@@ -27,6 +27,16 @@ export async function getCachedStaffPayload<T>(storeId: string) {
   return (await db.staffCache.get(storeId))?.payload as T | undefined;
 }
 
+export async function markCachedStaffNotificationsRead(storeId: string, ids: string[], readAt: string) {
+  const displayedIds = new Set(ids);
+  // Modify the latest cached row atomically, preserving any arrivals cached by a refresh.
+  await db.staffCache.where("storeId").equals(storeId).modify((cached) => {
+    const payload = cached.payload as { notifications: { id: string; readAt: string | null }[] };
+    cached.payload = { ...payload, notifications: payload.notifications.map((item) =>
+      !item.readAt && displayedIds.has(item.id) ? { ...item, readAt } : item) };
+  });
+}
+
 export async function enqueueMutation(mutation: OfflineMutation) {
   await db.mutations.put(mutation);
   if ("serviceWorker" in navigator && "SyncManager" in window) {

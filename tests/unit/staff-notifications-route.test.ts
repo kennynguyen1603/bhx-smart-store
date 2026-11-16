@@ -15,12 +15,12 @@ async function patch(body: unknown) {
 describe("PATCH staff notifications", () => {
   it.each(["STAFF", "MANAGER", "ADMIN"])("scopes %s read updates to the authenticated user, selected store, and unread rows", async (role) => {
     getServerSession.mockResolvedValue({ user: { ...user, role } });
-    const response = await patch({ storeId: "store-1", userId: "other-user" });
+    const response = await patch({ storeId: "store-1", userId: "other-user", ids: ["shown-1", "shown-2"] });
     expect(response.status).toBe(200);
     const result = await response.json();
     expect(result).toEqual({ updated: 2, readAt: expect.any(String) });
     expect(new Date(result.readAt).toISOString()).toBe(result.readAt);
-    expect(updateMany).toHaveBeenCalledExactlyOnceWith({ where: { userId: "staff-1", storeId: "store-1", readAt: null }, data: { readAt: new Date(result.readAt) } });
+    expect(updateMany).toHaveBeenCalledExactlyOnceWith({ where: { id: { in: ["shown-1", "shown-2"] }, userId: "staff-1", storeId: "store-1", readAt: null }, data: { readAt: new Date(result.readAt) } });
   });
   it("rejects unauthenticated requests before mutation", async () => {
     getServerSession.mockResolvedValue(null);
@@ -28,13 +28,13 @@ describe("PATCH staff notifications", () => {
   });
   it.each(["STAFF", "MANAGER"])("denies %s access to another store before mutation", async (role) => {
     getServerSession.mockResolvedValue({ user: { ...user, role } });
-    expect((await patch({ storeId: "store-2" })).status).toBe(403); expect(updateMany).not.toHaveBeenCalled();
+    expect((await patch({ storeId: "store-2", ids: ["shown-1"] })).status).toBe(403); expect(updateMany).not.toHaveBeenCalled();
   });
-  it.each([{}, { storeId: "" }, { storeId: 12 }, null])("rejects invalid input %j without mutation", async (body) => {
+  it.each([{}, { storeId: "" }, { storeId: 12 }, null, { storeId: "store-1" }, { storeId: "store-1", ids: "all" }, { storeId: "store-1", ids: [""] }, { storeId: "store-1", ids: [12] }])("rejects invalid input %j without mutation", async (body) => {
     expect((await patch(body)).status).toBe(400); expect(updateMany).not.toHaveBeenCalled();
   });
   it("returns zero when every notification is already read", async () => {
-    updateMany.mockResolvedValue({ count: 0 }); const response = await patch({ storeId: "store-1" });
+    updateMany.mockResolvedValue({ count: 0 }); const response = await patch({ storeId: "store-1", ids: ["read-1"] });
     expect(await response.json()).toEqual({ updated: 0, readAt: expect.any(String) });
   });
 });

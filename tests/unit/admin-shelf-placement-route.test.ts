@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PUT } from "@/app/api/admin/[resource]/[id]/route";
 
 const db = vi.hoisted(() => ({
+  $queryRaw: vi.fn().mockResolvedValue([]),
   session: vi.fn(), shelf: { findUniqueOrThrow: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   store: { findUniqueOrThrow: vi.fn() }, zone: { findFirst: vi.fn() },
 }));

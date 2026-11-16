@@ -62,8 +62,13 @@ export async function PUT(request: Request, context: { params: Promise<{ resourc
       case "shelves": {
         const data = z.object({ label: z.string().min(2).optional(), zoneId: z.string().nullable().optional(), x: z.number().int().optional(), y: z.number().int().optional(), width: z.number().int().positive().optional(), height: z.number().int().positive().optional() }).parse(raw);
         return Response.json(await prisma.$transaction(async (tx) => {
+          const existing = await tx.shelf.findUniqueOrThrow({ where: { id } });
+          if (user.role !== Role.ADMIN && !user.storeIds.includes(existing.storeId)) throw new ApiError(403, "Không có quyền tại cửa hàng", "STORE_FORBIDDEN");
+          // Serialize this store's moves through commit, across server processes.
+          // NO KEY UPDATE leaves unrelated foreign-key checks free to proceed.
+          await tx.$queryRaw`SELECT id FROM "Store" WHERE id = ${existing.storeId} FOR NO KEY UPDATE`;
+          // Another move may have committed while we waited for the store lock.
           const shelf = await tx.shelf.findUniqueOrThrow({ where: { id } });
-          if (user.role !== Role.ADMIN && !user.storeIds.includes(shelf.storeId)) throw new ApiError(403, "Không có quyền tại cửa hàng", "STORE_FORBIDDEN");
           if (data.zoneId) {
             const zone = await tx.zone.findFirst({ where: { id: data.zoneId, storeId: shelf.storeId }, select: { id: true } });
             if (!zone) throw new ApiError(400, "Khu vực phải thuộc cùng cửa hàng với kệ.", "CROSS_STORE_REFERENCE");
@@ -76,7 +81,7 @@ export async function PUT(request: Request, context: { params: Promise<{ resourc
             throw new ApiError(409, "Vị trí này đã có kệ khác.", "SHELF_POSITION_OCCUPIED");
           }
           return tx.shelf.update({ where: { id }, data });
-        }));
+        }, { isolationLevel: "ReadCommitted" }));
       }
       case "esls": {
         const data = z.object({ shelfId: z.string().optional(), productId: z.string().optional(), ledOn: z.boolean().optional() }).parse(raw);

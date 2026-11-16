@@ -5,6 +5,7 @@ import type { Session } from "next-auth";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { StaffApp } from "@/components/staff-app";
 import { prepareDevicePush, setupDevicePush } from "@/lib/push-client";
+import { cacheStaffPayload, getCachedStaffPayload, markCachedStaffNotificationsRead } from "@/lib/offline";
 
 vi.mock("next-auth/react", () => ({ signOut: vi.fn() }));
 vi.mock("@/components/barcode-scanner", () => ({ BarcodeScanner: () => null }));
@@ -23,6 +24,7 @@ vi.mock("@/components/esl-scanner-modal", () => ({
 }));
 vi.mock("@/lib/offline", () => ({
   cacheStaffPayload: vi.fn(async () => undefined), enqueueMutation: vi.fn(async () => undefined),
+  markCachedStaffNotificationsRead: vi.fn(async () => undefined),
   flushOfflineMutations: vi.fn(async () => ({ remaining: 0, conflicts: [] })),
   getCachedStaffPayload: vi.fn(async () => null), offlineQueueCount: vi.fn(async () => 0),
 }));
@@ -80,6 +82,9 @@ async function render(asUser = user) {
   await act(async () => { root.render(createElement(StaffApp, { user: asUser })); await new Promise((done) => setTimeout(done, 10)); });
 }
 beforeEach(() => {
+  vi.mocked(cacheStaffPayload).mockReset().mockResolvedValue(undefined);
+  vi.mocked(getCachedStaffPayload).mockReset().mockResolvedValue(undefined);
+  vi.mocked(markCachedStaffNotificationsRead).mockReset().mockResolvedValue(undefined);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   workerDescriptor = Object.getOwnPropertyDescriptor(navigator, "serviceWorker");
   payload = structuredClone(staffPayload);
@@ -125,7 +130,7 @@ describe("Staff notification center", () => {
     await act(async () => { const action = button("Đánh dấu tất cả đã đọc"); action.click(); action.click(); });
     expect(bell().textContent).toBe(""); expect(button("Đánh dấu tất cả đã đọc").disabled).toBe(true);
     const calls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/staff/notifications");
-    expect(calls).toHaveLength(1); expect(calls[0][1]?.method).toBe("PATCH"); expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ storeId: "store-1" });
+    expect(calls).toHaveLength(1); expect(calls[0][1]?.method).toBe("PATCH"); expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ storeId: "store-1", ids: ["notification-1"] });
     await act(async () => finish(Response.json({ updated: 1, readAt: "2026-11-16T03:00:00.000Z" })));
     expect(bell().textContent).toBe(""); expect(document.querySelector(".toast.error")).toBeNull();
   });
@@ -148,6 +153,30 @@ describe("Staff notification center", () => {
     expect(bell().textContent).toBe("1");
     await act(async () => finish(new Response(null, { status: 503 })));
     expect(bell().textContent).toBe("2"); expect(document.body.textContent).toContain("Thông báo mới");
+  });
+  it.each(["available", "failed"])("keeps confirmed reads through offline fallback with %s cache writes and preserves arrivals", async (cacheStatus) => {
+    let cached: unknown;
+    vi.mocked(cacheStaffPayload).mockImplementation(async (_storeId, value) => { cached = structuredClone(value); });
+    vi.mocked(getCachedStaffPayload).mockImplementation(async () => cached);
+    if (cacheStatus === "failed") vi.mocked(markCachedStaffNotificationsRead).mockRejectedValueOnce(new Error("Storage unavailable"));
+    let finish!: (response: Response) => void;
+    readRequest = () => new Promise((resolve) => { finish = resolve; });
+    await render(); await openCenter(); await click(button("Đánh dấu tất cả đã đọc"));
+    payload.notifications.push({ ...notifications[0], id: "notification-new", title: "Thông báo mới" });
+    const reload = container.querySelector<HTMLButtonElement>('[aria-label="Tải lại"]')!;
+    await click(reload);
+    expect(bell().textContent).toBe("1");
+    const calls = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/staff/notifications");
+    // The arriving row must not be included in the original read request.
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ storeId: "store-1", ids: ["notification-1"] });
+    await act(async () => finish(Response.json({ updated: 1, readAt: "2026-11-16T03:00:00.000Z" })));
+    fetchMock.mockRejectedValueOnce(new TypeError("Offline"));
+    await click(reload);
+    expect(container.querySelector(".connection-pill")?.textContent).toContain("Offline");
+    expect(bell().textContent).toBe("1");
+    const unreadRows = [...document.querySelectorAll(".notification-row.unread")];
+    expect(unreadRows.map((row) => row.querySelector("strong")?.textContent)).toEqual(["Thông báo mới"]);
+    expect(document.querySelectorAll(".notification-row")).toHaveLength(3);
   });
   it.each(["before", "during"])("ignores an unread GET started %s PATCH that resolves after successful read-all", async (timing) => {
     let finishGet!: (response: Response) => void;

@@ -28,6 +28,52 @@ async function openMap(page: Page) {
   return data.stores.find((store) => store.id === data.selectedStoreId)!;
 }
 
+test("confirmed notification reads survive offline fallback and reload without consuming arrivals", async ({ page }) => {
+  await signIn(page, "staff");
+  const feed = await page.request.get("/api/staff/tasks");
+  expect(feed.ok()).toBe(true);
+  const payload = await feed.json();
+  const notification = { id: "displayed-unread", type: "TASK_CREATED", title: "Displayed notification", body: "Snapshot", readAt: null, createdAt: "2026-11-16T01:00:00Z", taskId: null };
+  payload.notifications = [notification];
+  let offline = false;
+  let requestIds: string[] = [];
+  let finish!: () => void;
+  const patchGate = new Promise<void>((resolve) => { finish = resolve; });
+  await page.route("**/api/staff/tasks?*", (route) => offline ? route.abort("internetdisconnected") : route.fulfill({ json: payload }));
+  await page.route("**/api/staff/notifications", async (route) => {
+    requestIds = route.request().postDataJSON().ids;
+    await patchGate;
+    await route.fulfill({ json: { updated: 1, readAt: "2026-11-16T03:00:00.000Z" } });
+  });
+  try {
+    // Discard login-time requests before the controlled feed/cache scenario starts.
+    await page.reload();
+    await page.getByRole("button", { name: "Thông báo, 1 chưa đọc", exact: true }).click();
+    await expect(page.locator(".notification-row strong")).toHaveText("Displayed notification");
+    await page.getByRole("button", { name: "Đánh dấu tất cả đã đọc", exact: true }).click();
+    await expect.poll(() => requestIds).toEqual(["displayed-unread"]);
+    payload.notifications.push({ ...notification, id: "new-unread", title: "New arrival" });
+    // Visibility refresh works while the dialog is open, with the PATCH pending.
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(page.locator(".notification-row.unread")).toHaveText(/New arrival/);
+    finish();
+    await expect(page.locator(".notification-read-action")).toContainText("Đã đánh dấu tất cả đã đọc.");
+    offline = true;
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(page.locator(".connection-pill")).toContainText("Offline");
+    await expect(page.locator(".notification-row.unread")).toHaveCount(1);
+    await expect(page.locator(".notification-row.unread")).toHaveText(/New arrival/);
+    await page.reload();
+    await expect(page.locator(".connection-pill")).toContainText("Offline");
+    await page.getByRole("button", { name: "Thông báo, 1 chưa đọc", exact: true }).click();
+    await expect(page.locator(".notification-row")).toHaveCount(2);
+    await expect(page.locator(".notification-row.unread")).toHaveText(/New arrival/);
+  } finally {
+    finish();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
 async function center(locator: Locator) {
   await locator.evaluate((element) => element.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }));
   await locator.click({ trial: true });

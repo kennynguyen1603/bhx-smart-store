@@ -9,7 +9,7 @@ import { EslScannerModal, type TaskSummary } from "@/components/esl-scanner-moda
 import { Logo } from "@/components/logo";
 import { DEMO_ACCOUNTS } from "@/lib/demo-roles";
 import { StaffNotificationCenter, type StaffNotification } from "@/components/staff-notification-center";
-import { cacheStaffPayload, enqueueMutation, flushOfflineMutations, getCachedStaffPayload, offlineQueueCount } from "@/lib/offline";
+import { cacheStaffPayload, enqueueMutation, flushOfflineMutations, getCachedStaffPayload, markCachedStaffNotificationsRead, offlineQueueCount } from "@/lib/offline";
 
 type StoreOption = { id: string; code: string; name: string; address: string };
 type Inventory = { id: string; onShelf: number; backroom: number; capacity: number; lowThreshold: number; version: number; product: { id: string; name: string; emoji: string }; shelf: { id: string; code: string; label: string } };
@@ -34,7 +34,16 @@ export function StaffApp({ user }: { user: Session["user"] }) {
   const [loading, setLoading] = useState(true);
   const readPendingRef = useRef<{ storeId: string; previous: StaffNotification[]; readAt: string } | null>(null);
   const readVersionsRef = useRef(new Map<string, number>());
+  const confirmedReadsRef = useRef(new Map<string, Map<string, string>>());
   const managerOversight = user.role === "MANAGER";
+
+  const mergeConfirmedReads = useCallback((payload: Payload): Payload => {
+    const confirmed = confirmedReadsRef.current.get(payload.selectedStoreId);
+    return confirmed ? { ...payload, notifications: payload.notifications.map((item) => {
+      const readAt = confirmed.get(item.id);
+      return !item.readAt && readAt ? { ...item, readAt } : item;
+    }) } : payload;
+  }, []);
 
   const notify = useCallback((message: string, error = false) => { setToast({ message, error }); window.setTimeout(() => setToast(null), 4200); }, []);
   const load = useCallback(async () => {
@@ -44,7 +53,7 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     try {
       const response = await fetch(`/api/staff/tasks?storeId=${storeId}`, { cache: "no-store" });
       if (!response.ok) throw new Error();
-      const payload = await response.json() as Payload;
+      const payload = mergeConfirmedReads(await response.json() as Payload);
       if (!isCurrentReadVersion()) return;
       const pendingRead = readPendingRef.current;
       const pendingIds = new Set(pendingRead?.previous.filter((item) => !item.readAt).map((item) => item.id));
@@ -56,10 +65,10 @@ export function StaffApp({ user }: { user: Session["user"] }) {
     } catch {
       const cached = await getCachedStaffPayload<Payload>(storeId);
       if (!isCurrentReadVersion()) return;
-      if (cached) { setData(cached); setOnline(false); }
+      if (cached) { setData(mergeConfirmedReads(cached)); setOnline(false); }
       else notify("Không thể tải nhiệm vụ. Kiểm tra kết nối mạng.", true);
     } finally { setLoading(false); }
-  }, [storeId, notify]);
+  }, [storeId, notify, mergeConfirmedReads]);
 
   useEffect(() => { const initialLoad = window.setTimeout(() => void load(), 0); const timer = window.setInterval(() => void load(), 15_000); return () => { clearTimeout(initialLoad); clearInterval(timer); }; }, [load]);
   useEffect(() => {
@@ -109,16 +118,30 @@ export function StaffApp({ user }: { user: Session["user"] }) {
 
   async function readAllNotifications(): Promise<boolean> {
     if (!data || data.selectedStoreId !== storeId || readPendingRef.current) return false;
-    const previous = data.notifications;
+    const previous = data.notifications.filter((item) => !item.readAt);
+    const ids = previous.map((item) => item.id);
+    const displayedIds = new Set(ids);
     const readAt = new Date().toISOString();
     readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
     readPendingRef.current = { storeId, previous, readAt };
-    setData((current) => current?.selectedStoreId === storeId ? { ...current, notifications: current.notifications.map((item) => item.readAt ? item : { ...item, readAt }) } : current);
+    setData((current) => current?.selectedStoreId === storeId ? { ...current, notifications: current.notifications.map((item) => !item.readAt && displayedIds.has(item.id) ? { ...item, readAt } : item) } : current);
     try {
       const response = await fetch("/api/staff/notifications", {
-        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storeId }),
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storeId, ids }),
       });
       if (!response.ok) throw new Error("Read update failed");
+      const result = await response.json() as { readAt: string };
+      const confirmed = confirmedReadsRef.current.get(storeId) || new Map<string, string>();
+      for (const id of ids) confirmed.set(id, result.readAt);
+      confirmedReadsRef.current.set(storeId, confirmed);
+      // Invalidate pre-confirmation GETs before awaiting the cache transaction.
+      readVersionsRef.current.set(storeId, (readVersionsRef.current.get(storeId) || 0) + 1);
+      setData((current) => current?.selectedStoreId === storeId ? {
+        ...current, notifications: current.notifications.map((item) => displayedIds.has(item.id) && item.readAt === readAt ? { ...item, readAt: result.readAt } : item),
+      } : current);
+      // Storage failure must not roll back a successful server acknowledgement.
+      // The in-memory confirmations still protect fallback for this session.
+      await markCachedStaffNotificationsRead(storeId, ids, result.readAt).catch(() => undefined);
       return true;
     } catch {
       const previousById = new Map(previous.map((item) => [item.id, item]));
