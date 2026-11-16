@@ -135,6 +135,7 @@ describe("Staff notification center", () => {
     expect(calls).toHaveLength(1); expect(calls[0][1]?.method).toBe("PATCH"); expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ storeId: "store-1", ids: ["notification-1"] });
     await act(async () => finish(Response.json({ updated: 1, readAt: "2026-11-16T03:00:00.000Z" })));
     expect(bell().textContent).toBe(""); expect(document.querySelector(".toast.error")).toBeNull();
+    expect(document.querySelector('.notification-read-action [role="status"]')?.textContent).toBe("Đã đánh dấu tất cả đã đọc.");
   });
   it.each(["http", "network"])("restores unread state with inline retry after %s failure", async (failure) => {
     readRequest = async () => { if (failure === "network") throw new TypeError("Failed to fetch"); return new Response(null, { status: 503 }); };
@@ -465,6 +466,7 @@ describe("individual notification", () => {
     readRequest = async () => Response.json({ readAt: "2026-11-17T00:00:00Z" });
     await click(document.querySelector<HTMLButtonElement>('.notification-row button[aria-label="Đánh dấu đã đọc"]')!);
     expect(bell().textContent).toBe("2");
+    expect(document.querySelector('.notification-read-action [role="status"]')?.textContent).toBe("Đã đánh dấu đã đọc.");
   });
 });
 

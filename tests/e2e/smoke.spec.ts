@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import nextEnv from "@next/env";
 
 async function authenticateStaffApp(page: Page, email: string) {
@@ -1310,6 +1310,126 @@ test("status badge renders all five Vietnamese states alongside priority on mobi
     await expect(rows.nth(index).locator('[data-slot="badge"]')).toHaveText(label);
     await expect(rows.nth(index).locator(".badge.high")).toHaveText("HIGH");
     await expect(rows.nth(index).locator('[data-slot="badge"]')).toBeVisible();
+  }
+});
+
+test("two-browser realtime task assignment requires explicit start and delivers an unread Admin outcome", async ({ browser }) => {
+  test.setTimeout(120_000);
+  nextEnv.loadEnvConfig(process.cwd());
+  const { prisma } = await import("../../src/lib/db");
+  const staffUser = await prisma.user.findUniqueOrThrow({ where: { email: "staff@demo.bhx" }, include: { userStores: true } });
+  const storeId = staffUser.userStores.find(store => store.isDefault)!.storeId;
+  const inventory = await prisma.inventory.findFirstOrThrow({ where: { storeId }, include: { shelf: true } });
+  const supplier = await prisma.supplier.findFirstOrThrow({ where: { active: true } });
+  const marker = `two-browser-${crypto.randomUUID()}`;
+  const contexts: BrowserContext[] = [];
+  let productId: string | undefined;
+  const mutationIds: string[] = [];
+  try {
+    // All mutable business data belongs to this test; seeded lots and stock stay intact.
+    const product = await prisma.product.create({ data: {
+      sku: marker, barcode: marker, name: marker, searchText: marker, category: "Test", unit: "Hộp", basePriceVnd: 10000,
+      inventories: { create: { storeId, shelfId: inventory.shelfId, onShelf: 5, backroom: 10, capacity: 20, lowThreshold: 2 } },
+      lots: { create: { storeId, supplierId: supplier.id, batchCode: marker, origin: "Test", receivedAt: new Date(), expiryDate: new Date(Date.now() + 2 * 86400000), quantity: 10, status: "AVAILABLE" } },
+    } });
+    productId = product.id;
+    const adminContext = await browser.newContext(); contexts.push(adminContext);
+    const staffContext = await browser.newContext(); contexts.push(staffContext);
+    const admin = await adminContext.newPage(), staff = await staffContext.newPage();
+    await authenticateStaffApp(admin, "admin@demo.bhx"); await admin.goto("/admin");
+    await admin.locator(".store-selector select").selectOption(storeId);
+    await admin.getByRole("button", { name: "Nhiệm vụ", exact: true }).click();
+    await authenticateStaffApp(staff, staffUser.email);
+    await staff.getByRole("button", { name: /^Nhiệm vụ/ }).click();
+    await staff.getByRole("button", { name: "FEFO", exact: true }).click();
+    await Promise.all([admin, staff].map(client => client.waitForResponse(response => new URL(response.url()).pathname === "/api/store-changes" && response.ok(), { timeout: 6000 })));
+    const navigations: string[] = [], writes: string[] = [];
+    for (const client of [admin, staff]) client.on("framenavigated", frame => { if (frame === client.mainFrame()) navigations.push(frame.url()); });
+    staff.on("request", request => {
+      if (request.method() !== "GET" && /\/api\/staff\/tasks\//.test(request.url())) {
+        writes.push(new URL(request.url()).pathname);
+        mutationIds.push(request.postDataJSON().clientMutationId);
+      }
+    });
+    await admin.getByRole("button", { name: "Giao nhiệm vụ", exact: true }).click();
+    const form = admin.getByRole("dialog", { name: "Giao nhiệm vụ", exact: true });
+    for (const [label, option] of [["Loại nhiệm vụ", "FEFO"], ["Sản phẩm", marker], ["Kệ", inventory.shelf.label], ["Người nhận", staffUser.name], ["Độ ưu tiên", "Cao"]]) {
+      await form.getByRole("combobox", { name: label, exact: true }).click();
+      await admin.getByRole("option", { name: option, exact: true }).click();
+    }
+    await form.getByLabel("Ghi chú", { exact: true }).fill(marker);
+    const creation = admin.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/tasks" && response.request().method() === "POST");
+    await form.getByRole("button", { name: "Lưu", exact: true }).click();
+    const created = await creation; const assignedAt = Date.now();
+    expect(created.status()).toBe(201);
+    const { task } = await created.json();
+    expect(task.assigneeId).toBe(staffUser.id);
+    await expect(form).toHaveCount(0);
+    const staffRow = staff.locator(".task-row").filter({ hasText: marker });
+    await expect(staffRow).toBeVisible({ timeout: Math.max(1, 6000 - (Date.now() - assignedAt)) });
+    const assignmentDelay = Date.now() - assignedAt;
+    expect(assignmentDelay).toBeLessThan(6000);
+    const adminRow = admin.locator(".admin-task-table tbody tr").filter({ hasText: marker });
+    await expect(adminRow).toContainText(staffUser.name);
+    await expect(adminRow.locator('[data-slot="badge"]').first()).toHaveText("Mới");
+    const beforeOpening = await prisma.task.findUniqueOrThrow({ where: { id: task.id }, include: { events: true } });
+    await staffRow.click();
+    const details = staff.locator(".staff-task-modal");
+    await expect(details.getByRole("heading", { name: task.title, exact: true })).toBeVisible();
+    await expect(details.locator('[data-slot="badge"]')).toHaveText("Mới");
+    await expect(details.getByRole("button", { name: "Bắt đầu", exact: true })).toBeEnabled();
+    await staff.waitForTimeout(300);
+    expect(writes).toEqual([]);
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id }, include: { events: true } })).toEqual(beforeOpening);
+    const startResponse = staff.waitForResponse(response => new URL(response.url()).pathname === `/api/staff/tasks/${task.id}/start` && response.request().method() === "POST");
+    await details.getByRole("button", { name: "Bắt đầu", exact: true }).click();
+    expect((await startResponse).ok()).toBe(true);
+    await expect(details.locator('[data-slot="badge"]')).toHaveText("Đang làm");
+    expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).startedAt).not.toBeNull();
+    const unreadBefore = Number(await admin.locator(".notification-button").textContent());
+    await admin.locator(".notification-button").click();
+    const notifications = admin.getByRole("dialog", { name: "Thông báo", exact: true });
+    await expect(notifications.locator(".notification-row").filter({ hasText: marker })).toHaveCount(0);
+    const completion = staff.waitForResponse(response => new URL(response.url()).pathname === `/api/staff/tasks/${task.id}/fefo` && response.request().method() === "POST");
+    await details.getByRole("button", { name: "Xác nhận đã dán nhãn", exact: true }).click();
+    expect((await completion).ok()).toBe(true); const completedAt = Date.now();
+    const outcome = notifications.locator(".notification-row").filter({ hasText: marker });
+    await Promise.all([
+      expect(adminRow.locator('[data-slot="badge"]').first()).toHaveText("Hoàn thành", { timeout: 6000 }),
+      expect(outcome).toContainText("Nhiệm vụ hoàn thành", { timeout: 6000 }),
+    ]);
+    const outcomeDelay = Date.now() - completedAt;
+    expect(outcomeDelay).toBeLessThan(6000);
+    await expect(outcome).toHaveClass(/unread/);
+    await expect(outcome.getByRole("button", { name: "Đánh dấu đã đọc", exact: true })).toBeVisible();
+    await expect(admin.locator(".notification-button")).toHaveText(String(unreadBefore + 1));
+    expect(writes).toEqual([`/api/staff/tasks/${task.id}/start`, `/api/staff/tasks/${task.id}/fefo`]);
+    expect(navigations).toEqual([]);
+    console.log(`two-browser realtime: Admin→Staff ${assignmentDelay}ms; Staff→Admin badge+unread ${outcomeDelay}ms; opening writes=0; navigations=0`);
+  } finally {
+    await Promise.allSettled(contexts.map(context => context.close()));
+    if (productId) {
+      const tasks = await prisma.task.findMany({ where: { productId }, select: { id: true } });
+      const taskIds = tasks.map(task => task.id);
+      const lots = await prisma.lot.findMany({ where: { productId }, select: { id: true } });
+      await prisma.notification.deleteMany({ where: { taskId: { in: taskIds } } });
+      await prisma.mutationReceipt.deleteMany({ where: { OR: [
+        { clientMutationId: { in: mutationIds } },
+        ...taskIds.map(id => ({ response: { path: ["task", "id"], equals: id } })),
+      ] } });
+      await prisma.auditLog.deleteMany({ where: { entityId: { in: [productId, ...taskIds, ...lots.map(lot => lot.id)] } } });
+      await prisma.product.delete({ where: { id: productId } });
+      expect(await prisma.task.count({ where: { id: { in: taskIds } } })).toBe(0);
+      expect(await prisma.notification.count({ where: { taskId: { in: taskIds } } })).toBe(0);
+      expect(await prisma.mutationReceipt.count({ where: { clientMutationId: { in: mutationIds } } })).toBe(0);
+      expect(await prisma.product.count({ where: { id: productId } })).toBe(0);
+      expect(await prisma.inventory.count({ where: { productId } })).toBe(0);
+      expect(await prisma.lot.count({ where: { productId } })).toBe(0);
+      expect(await prisma.markdown.count({ where: { lotId: { in: lots.map(lot => lot.id) } } })).toBe(0);
+      expect(await prisma.taskEvent.count({ where: { taskId: { in: taskIds } } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { entityId: { in: [productId, ...taskIds, ...lots.map(lot => lot.id)] } } })).toBe(0);
+      console.log(`two-browser cleanup: product, inventory, lot, markdown, task, events, notifications, receipts and audits removed (${marker})`);
+    }
   }
 });
 

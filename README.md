@@ -111,23 +111,31 @@ Chạy `npm run db:seed` **trước mỗi buổi demo/test, hoặc ít nhất 2 
 ### Tự hoàn thành FEFO rồi xem giá đổi
 
 1. Sau seed, tìm **YOGURT-4 · Sữa chua Vinamilk có đường lốc 4 hộp** và **EGGS-10 · Trứng gà tươi C.P hộp 10 quả** tại kiosk NT-Q5: giá lần lượt **31.000 ₫** và **34.500 ₫**, chưa có nhãn giảm. Lô sớm nhất của mỗi sản phẩm đang `AVAILABLE`, HSD +3 ngày, có task FEFO `OPEN` tại NT-Q5; ghi chú ngày còn lại và mức giảm được tính theo luật thật lúc seed.
-2. Đăng nhập `/staff` bằng `staff@demo.bhx`, chọn cửa hàng **BHX Nguyễn Trãi**, mở **Nhiệm vụ → FEFO**. Mở **Dán nhãn FEFO sữa chua** hoặc **Dán nhãn FEFO trứng gà**, kiểm tra đúng mã lô/HSD, thực hiện dán nhãn rồi bấm **Xác nhận đã dán nhãn**. Chờ thông báo **Đã áp dụng nhãn FEFO.**; Manager chỉ xem, không hoàn thành thay Staff.
+2. Đăng nhập `/staff` bằng `staff@demo.bhx`, chọn cửa hàng **BHX Nguyễn Trãi**, mở **Nhiệm vụ → FEFO**. Mở **Dán nhãn FEFO sữa chua** hoặc **Dán nhãn FEFO trứng gà** để xem chi tiết; bấm **Bắt đầu** để chuyển sang **Đang làm**. Kiểm tra đúng mã lô/HSD, thực hiện dán nhãn rồi bấm **Xác nhận đã dán nhãn**. Chờ thông báo **Đã áp dụng nhãn FEFO.**; Manager chỉ xem, không hoàn thành thay Staff.
 3. Tải lại trang kiosk và tìm lại sản phẩm để tránh dữ liệu chi tiết đã cache trong phiên. Hoàn thành ngay sau seed áp mức 20%: YOGURT **24.800 ₫** (giá gốc **31.000 ₫**) và EGGS **27.600 ₫** (giá gốc **34.500 ₫**), kèm **Giảm 20%** ở thẻ và chi tiết.
 4. Mức giảm lấy theo luật tại thời điểm hoàn thành: còn ≤3 ngày giảm 20%, còn ≤1 ngày giảm 30%; tới ngày HSD thì cách ly, không bán. Không cộng dồn phần trăm: mức bằng/thấp hơn hiện tại bị từ chối; nâng 20% lên 30% sẽ thay mức cũ.
 
 ### Quét ESL độc lập và QR demo
 
 1. Đăng nhập `/staff`, chọn **Quét ESL**, rồi dùng camera hoặc nhập mã ESL thủ công; thao tác này không cần mở một nhiệm vụ trước.
-2. ESL không có nhiệm vụ đang mở hiển thị `Không có nhiệm vụ đang mở`; một nhiệm vụ sẽ mở thẳng luồng xử lý hiện có; nhiều nhiệm vụ yêu cầu chọn nhiệm vụ cần mở.
+2. ESL không có nhiệm vụ đang mở hiển thị `Không có nhiệm vụ đang mở`; có một hoặc nhiều nhiệm vụ đều giữ kết quả và QR để xem, chỉ mở chi tiết sau khi bấm **Mở nhiệm vụ** ở nhiệm vụ muốn xem.
 3. Sau khi API xác nhận ESL thuộc cửa hàng được phép truy cập, màn hình hiển thị QR demo để thiết bị thứ hai quét. Payload QR chỉ chứa mã ESL ổn định, không chứa giá hoặc tồn kho.
 4. Quét ESL chỉ tra cứu/mở nhiệm vụ, không tự động hoàn thành nhiệm vụ.
 
 ### Hành vi Staff và Manager
 
-- **Staff** chỉ thấy nhiệm vụ chưa được nhận hoặc do chính mình nhận; lịch sử và số liệu không lộ nhiệm vụ riêng của Staff khác. Khi hai Staff cùng nhận một nhiệm vụ, chỉ một người trở thành người phụ trách.
+- **Staff** chỉ thấy nhiệm vụ chưa phân công hoặc được giao/đã nhận bởi chính mình; lịch sử và số liệu không lộ nhiệm vụ riêng của Staff khác. Mở nhiệm vụ hoặc kết quả ESL chỉ xem chi tiết, không đổi trạng thái hay nhận việc. Bấm **Bắt đầu** mới chuyển nhiệm vụ **Mới/Bị chặn** sang **Đang làm**; hoàn thành vẫn cần bấm nút xác nhận riêng. Khi hai Staff cùng nhận một nhiệm vụ, chỉ một người trở thành người phụ trách.
 - **Manager** thấy toàn bộ nhiệm vụ của cửa hàng, gồm người phụ trách và thời điểm hoàn thành để giám sát. Giao diện Manager không cung cấp thao tác thực thi/hoàn thành nhiệm vụ thay Staff.
 - **Quét ESL** là một tab ứng dụng độc lập cho cả Staff và Manager: trang nhiệm vụ được gỡ khỏi màn hình khi tab ESL hoạt động, đóng ESL trở về Tổng quan, và chọn nhiệm vụ chuyển đúng sang luồng nhiệm vụ.
 - Trên màn hình di động, nút thông báo và đăng xuất có vùng chạm tối thiểu 44×44px, không co hoặc chồng lấp. Thiết lập Web Push hiển thị trạng thái chờ, chặn nhấp lặp, chỉ báo thành công sau khi máy chủ lưu đăng ký, và luôn cho phép thử lại sau lỗi.
+
+### Giao nhiệm vụ, đồng bộ và thông báo
+
+1. Đăng nhập `/admin` bằng Admin hoặc Manager có quyền tại cửa hàng, chọn **Nhiệm vụ → Giao nhiệm vụ**. Chọn loại **Bổ sung hàng/FEFO/Cách ly**, sản phẩm, kệ và người nhận theo tên; có thể thêm lô, độ ưu tiên, hạn và ghi chú. Để trống người nhận nếu muốn Staff trong cửa hàng tự nhận. Danh sách Admin hiển thị người phụ trách, badge trạng thái và thời điểm hoàn thành.
+2. Giữ hai phiên đăng nhập riêng cho Admin và Staff. Khi Admin giao việc, Staff nhận nhiệm vụ mà không cần tải lại trang. Khi Staff bấm **Bắt đầu**, rồi xác nhận hoàn thành, Admin thấy trạng thái mới và thông báo kết quả mà không cần tải lại.
+3. Staff và Admin kiểm tra dấu thay đổi mỗi **4 giây** khi tab đang hiển thị; chỉ tải lại dữ liệu khi cần đồng bộ. Vì vậy thay đổi có độ trễ khoảng vài giây, không tức thì. Tab ẩn dừng polling; khi focus hoặc hiển thị lại sẽ kiểm tra ngay.
+4. Nhiệm vụ có người nhận chỉ gửi thông báo giao việc cho **Staff đang hoạt động được giao**. Chưa phân công thì gửi cho **mọi Staff đang hoạt động thuộc cửa hàng**. Khi nhiệm vụ hoàn thành hoặc bị chặn, **Manager/Admin đang hoạt động có quyền tại cửa hàng** nhận thông báo kết quả, trừ người thực hiện. Chuông trong Staff/Admin hiển thị số chưa đọc; mỗi thông báo có **Đánh dấu đã đọc**, và vẫn có **Đánh dấu tất cả đã đọc**.
+5. **Web Push là tùy chọn trên từng thiết bị**: mở chuông để **Bật thông báo trên thiết bị** hoặc **Tắt thông báo trên thiết bị**. Tắt sẽ hủy đăng ký trình duyệt và xóa subscription của thiết bị trên máy chủ. Thông báo trong app và đồng bộ nhiệm vụ vẫn hoạt động khi chưa cấp/từ chối quyền trình duyệt, trình duyệt không hỗ trợ push hoặc máy chủ chưa cấu hình VAPID; lỗi push không hủy thao tác giao/hoàn thành nhiệm vụ.
 
 ### Biểu mẫu Admin và mô phỏng tích hợp
 

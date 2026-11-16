@@ -36,10 +36,15 @@ test("confirmed notification reads survive offline fallback and reload without c
   const notification = { id: "displayed-unread", type: "TASK_CREATED", title: "Displayed notification", body: "Snapshot", readAt: null, createdAt: "2026-11-16T01:00:00Z", taskId: null };
   payload.notifications = [notification];
   let offline = false;
+  let revision = 0;
   let requestIds: string[] = [];
   let finish!: () => void;
   const patchGate = new Promise<void>((resolve) => { finish = resolve; });
   await page.route("**/api/staff/tasks?*", (route) => offline ? route.abort("internetdisconnected") : route.fulfill({ json: payload }));
+  await page.route("**/api/store-changes?*", (route) => route.fulfill({ json: {
+    token: `notification-fixture-${revision}`, taskUpdatedAt: null, notificationUpdatedAt: null,
+    unreadCount: payload.notifications.filter((item: { readAt: string | null }) => !item.readAt).length,
+  } }));
   await page.route("**/api/staff/notifications", async (route) => {
     requestIds = route.request().postDataJSON().ids;
     await patchGate;
@@ -53,12 +58,15 @@ test("confirmed notification reads survive offline fallback and reload without c
     await page.getByRole("button", { name: "Đánh dấu tất cả đã đọc", exact: true }).click();
     await expect.poll(() => requestIds).toEqual(["displayed-unread"]);
     payload.notifications.push({ ...notification, id: "new-unread", title: "New arrival" });
+    revision++;
     // Visibility refresh works while the dialog is open, with the PATCH pending.
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
     await expect(page.locator(".notification-row.unread")).toHaveText(/New arrival/);
     finish();
     await expect(page.locator(".notification-read-action")).toContainText("Đã đánh dấu tất cả đã đọc.");
     offline = true;
+    // A changed snapshot is detected, but its full feed is unavailable: use the cache.
+    revision++;
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
     await expect(page.locator(".connection-pill")).toContainText("Offline");
     await expect(page.locator(".notification-row.unread")).toHaveCount(1);

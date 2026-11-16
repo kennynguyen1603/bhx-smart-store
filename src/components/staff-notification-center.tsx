@@ -87,13 +87,14 @@ export function StaffNotificationCenter({ notifications, storeId, onRead }: {
     finally { pushGuard.current = false; setPushPending(false); }
   }
 
-  async function markRead(ids: string[]) {
+  async function markRead(ids: string[], all = false) {
     if (readGuard.current || !ids.length || !storeId) return;
     readGuard.current = true;
     setReadPending(true);
     setReadMessage("");
     try {
-      setReadMessage(await onRead(ids) ? "Đã đánh dấu đã đọc." : "Không thể đánh dấu đã đọc. Hãy thử lại.");
+      const successMessage = all ? "Đã đánh dấu tất cả đã đọc." : "Đã đánh dấu đã đọc.";
+      setReadMessage(await onRead(ids) ? successMessage : "Không thể đánh dấu đã đọc. Hãy thử lại.");
     } catch {
       setReadMessage("Không thể đánh dấu đã đọc. Hãy thử lại.");
     } finally { readGuard.current = false; setReadPending(false); }
@@ -120,7 +121,7 @@ export function StaffNotificationCenter({ notifications, storeId, onRead }: {
         </Button>
       </section>
       <div className="notification-read-action">
-        <Button variant="secondary" disabled={readPending || !unread || !storeId} onClick={() => void markRead(notifications.filter(item => !item.readAt).map(item => item.id))}>
+        <Button variant="secondary" disabled={readPending || !unread || !storeId} onClick={() => void markRead(notifications.filter(item => !item.readAt).map(item => item.id), true)}>
           {readPending && <LoaderCircle className="spin" size={16} aria-hidden="true" />}Đánh dấu tất cả đã đọc
         </Button>
         {readMessage && <p role="status" className="notification-status">{readMessage}</p>}
