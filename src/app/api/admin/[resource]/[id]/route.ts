@@ -1,7 +1,7 @@
 import { hash } from "bcryptjs";
 import { Role } from "@/generated/prisma/client";
 import { ApiError, apiErrorResponse, requireUser } from "@/lib/api-auth";
-import { inventoryAdminSchema, productAdminSchema } from "@/lib/contracts";
+import { inventoryAdminBaseSchema, inventoryAdminSchema, productAdminSchema } from "@/lib/contracts";
 import { prisma } from "@/lib/db";
 import { normalizeSearch } from "@/lib/normalize";
 import { z } from "zod";
@@ -26,7 +26,8 @@ export async function PUT(request: Request, context: { params: Promise<{ resourc
       case "inventories": {
         const existing = await prisma.inventory.findUniqueOrThrow({ where: { id } });
         if (user.role !== Role.ADMIN && !user.storeIds.includes(existing.storeId)) throw new ApiError(403, "Không có quyền tại cửa hàng", "STORE_FORBIDDEN");
-        const data = inventoryAdminSchema.partial().parse(raw);
+        const data = inventoryAdminBaseSchema.partial().parse(raw);
+        inventoryAdminSchema.parse({ ...existing, ...data });
         const updated = await prisma.inventory.update({ where: { id }, data: { ...data, version: { increment: 1 } } });
         await prisma.auditLog.create({ data: { actorId: user.id, storeId: existing.storeId, action: "INVENTORY_ADMIN_UPDATE", entityType: "Inventory", entityId: id, before: JSON.parse(JSON.stringify(existing)), after: JSON.parse(JSON.stringify(updated)) } });
         return Response.json(updated);

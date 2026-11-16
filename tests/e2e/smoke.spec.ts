@@ -617,3 +617,111 @@ test("admin can sign in and open store operations", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Tổng quan" })).toBeVisible();
   await expect(page.getByText("Luồng tích hợp")).toBeVisible();
 });
+
+
+test.describe("Admin core forms", () => {
+  test("edits all core resources without native dialogs and preserves a failed write", async ({ page }) => {
+    const { overview } = await import("../fixtures/admin-core");
+    const nativeDialogs: string[] = [];
+    page.on("dialog", async (dialog) => { nativeDialogs.push(dialog.type()); await dialog.dismiss(); });
+    await page.route("**/api/admin/overview**", (route) => route.fulfill({ json: overview }));
+    const writes: { url: string; body: unknown }[] = [];
+    let failWrite = true;
+    let releaseWrite!: () => void;
+    let gate = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    await page.route(/\/api\/admin\/(stores|inventories|products|suppliers)\//, async (route) => {
+      writes.push({ url: route.request().url(), body: route.request().postDataJSON() });
+      await gate;
+      await route.fulfill(failWrite ? { status: 500, json: { error: { message: "Máy chủ từ chối cập nhật" } } } : { json: { id: "saved" } });
+    });
+    await page.goto("/login?callbackUrl=/admin");
+    await page.getByRole("button", { name: "Admin", exact: true }).click();
+    await page.locator('input[type="password"]').fill("Demo@123");
+    await page.getByRole("button", { name: /Đăng nhập/i }).click();
+    await expect(page).toHaveURL(/\/admin$/);
+    await expect(page.locator(".workspace-header")).toContainText("123 đường số hai");
+    await page.getByRole("button", { name: "Sửa cửa hàng", exact: true }).click();
+    expect(nativeDialogs).toEqual([]);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByLabel("Mã cửa hàng")).toHaveValue("BHX-02");
+    await expect(dialog.getByLabel("Mã cửa hàng")).toHaveAttribute("readonly", "");
+    await expect(dialog.getByLabel("Tên cửa hàng")).toHaveValue("BHX cửa hàng hai");
+    await dialog.getByLabel("Tên cửa hàng").fill("");
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click();
+    await expect(dialog.getByText("Tên cửa hàng phải có ít nhất 2 ký tự")).toBeVisible();
+    expect(writes).toHaveLength(0);
+    await dialog.getByLabel("Tên cửa hàng").fill("Cửa hàng vừa sửa");
+    await dialog.locator("form").evaluate((form) => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await expect.poll(() => writes.length).toBe(1);
+    await expect(dialog.getByRole("button", { name: "Đang xử lý…" })).toBeDisabled();
+    await page.keyboard.press("Escape"); await expect(dialog).toBeVisible();
+    releaseWrite();
+    await expect(page.getByText("Máy chủ từ chối cập nhật", { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel("Tên cửa hàng")).toHaveValue("Cửa hàng vừa sửa");
+    failWrite = false; gate = Promise.resolve();
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click();
+    await expect(dialog).toHaveCount(0); expect(writes).toHaveLength(2);
+    await expect(page.getByRole("button", { name: "Sửa cửa hàng", exact: true })).toBeFocused();
+
+    await page.locator(".data-table tbody tr").first().getByRole("button", { name: "Sửa", exact: true }).click();
+    await expect(dialog.getByLabel("Số lượng trên kệ")).toHaveValue("7");
+    await expect(dialog.getByLabel("Số lượng kho sau")).toHaveValue("19");
+    await dialog.getByLabel("Số lượng trên kệ").fill("1.5");
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click();
+    await expect(dialog.getByText("Số lượng phải là số nguyên không âm", { exact: true })).toBeVisible();
+    await dialog.getByLabel("Số lượng trên kệ").fill("25");
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click();
+    await expect(dialog.getByText("Số lượng trên kệ không được vượt sức chứa")).toBeVisible();
+    await dialog.getByLabel("Số lượng trên kệ").fill("9");
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click(); await expect(dialog).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Danh mục", exact: true }).click();
+    await page.locator(".data-table tbody tr").first().getByRole("button", { name: "Sửa", exact: true }).click();
+    await expect(dialog.getByLabel("SKU", { exact: true })).toHaveValue("SKU-02");
+    await expect(dialog.getByLabel("Mã vạch")).toHaveAttribute("readonly", "");
+    await expect(dialog.getByLabel("Danh mục", { exact: true })).toHaveValue("Sữa tươi");
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click(); await expect(dialog).toHaveCount(0);
+    await page.locator(".log-row").filter({ hasText: "SUP-02" }).getByRole("button", { name: "Sửa", exact: true }).click();
+    await expect(dialog.getByLabel("Mã nhà cung cấp")).toHaveValue("SUP-02");
+    await expect(dialog.getByLabel("Quốc gia")).toHaveValue("Việt Nam");
+    await expect(dialog.getByLabel("Chứng nhận")).toHaveValue("VietGAP");
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click(); await expect(dialog).toHaveCount(0);
+    expect(writes).toHaveLength(5); expect(nativeDialogs).toEqual([]);
+  });
+
+  test("creates products, closes on write success with refresh failure, and retries only overview", async ({ page }) => {
+    const { overview } = await import("../fixtures/admin-core");
+    const nativeDialogs: string[] = [];
+    page.on("dialog", async (dialog) => { nativeDialogs.push(dialog.type()); await dialog.dismiss(); });
+    let readCount = 0; let writeCount = 0; let failRefresh = false;
+    await page.route("**/api/admin/overview**", async (route) => {
+      readCount++;
+      await route.fulfill(failRefresh ? { status: 503, json: {} } : { json: overview });
+    });
+    await page.route("**/api/admin/products", async (route) => { writeCount++; failRefresh = true; await route.fulfill({ json: { id: "new-product" }, status: 201 }); });
+    await page.goto("/login?callbackUrl=/admin");
+    await page.getByRole("button", { name: "Admin", exact: true }).click();
+    await page.locator('input[type="password"]').fill("Demo@123");
+    await page.getByRole("button", { name: /Đăng nhập/i }).click();
+    await expect(page).toHaveURL(/\/admin$/);
+    await page.getByRole("button", { name: "Danh mục", exact: true }).click();
+    await page.getByRole("button", { name: "Thêm sản phẩm", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel("SKU", { exact: true }).fill("NEW-01");
+    await dialog.getByLabel("Mã vạch").fill("893000000003");
+    await dialog.getByLabel("Tên sản phẩm").fill("Sản phẩm mới");
+    await dialog.getByLabel("Danh mục", { exact: true }).fill("Sữa");
+    await dialog.getByRole("button", { name: "Lưu", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText(/Đã lưu thay đổi nhưng không thể tải lại dữ liệu/)).toBeVisible();
+    expect(writeCount).toBe(1); expect(readCount).toBe(2);
+    failRefresh = false;
+    await page.getByRole("button", { name: "Tải lại dữ liệu", exact: true }).click();
+    await expect.poll(() => readCount).toBe(3);
+    expect(writeCount).toBe(1); expect(nativeDialogs).toEqual([]);
+  });
+});

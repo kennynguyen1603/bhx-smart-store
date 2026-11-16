@@ -56,14 +56,19 @@ export const productAdminSchema = z.object({
   emoji: z.string().min(1).max(8).default("📦"),
 });
 
-export const inventoryAdminSchema = z.object({
+export const inventoryAdminBaseSchema = z.object({
   onShelf: z.number().int().nonnegative(),
   backroom: z.number().int().nonnegative(),
   capacity: z.number().int().positive(),
   lowThreshold: z.number().int().nonnegative(),
-}).refine((data) => data.lowThreshold < data.capacity, {
+});
+
+export const inventoryAdminSchema = inventoryAdminBaseSchema.refine((data) => data.lowThreshold < data.capacity, {
   message: "Ngưỡng cảnh báo phải nhỏ hơn sức chứa",
   path: ["lowThreshold"],
+}).refine((data) => data.onShelf <= data.capacity, {
+  message: "Số lượng trên kệ không được vượt sức chứa",
+  path: ["onShelf"],
 });
 
 export type SaleEventInput = z.infer<typeof saleEventSchema>;

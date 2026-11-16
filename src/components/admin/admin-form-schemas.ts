@@ -34,6 +34,8 @@ export const inventorySchema = z.object({
   capacity: integer("Sức chứa phải là số nguyên dương", 1), lowThreshold: quantity(),
 }).refine((value) => value.lowThreshold < value.capacity, {
   path: ["lowThreshold"], message: "Ngưỡng cảnh báo phải nhỏ hơn sức chứa",
+}).refine((value) => value.onShelf <= value.capacity, {
+  path: ["onShelf"], message: "Số lượng trên kệ không được vượt sức chứa",
 });
 
 const productFields = {

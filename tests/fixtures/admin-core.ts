@@ -1,0 +1,4 @@
+export const store = { id: "store", code: "BHX-02", name: "BHX cửa hàng hai", address: "123 đường số hai", mapWidth: 14, mapHeight: 9, active: true, zones: [], shelves: [], kiosks: [] };
+export const product = { id: "product", sku: "SKU-02", barcode: "893000000002", name: "Sữa tươi hai", category: "Sữa tươi", unit: "Hộp", basePriceVnd: 17000, emoji: "🥛", active: true };
+export const supplier = { id: "supplier", code: "SUP-02", name: "Nhà cung cấp hai", country: "Việt Nam", certificate: "VietGAP", active: true };
+export const overview = { generatedAt: "2026-11-16T00:00:00Z", selectedStoreId: "store", stores: [store], products: [product], suppliers: [supplier], users: [], lots: [], integrations: [], audits: [], rules: [], inventories: [{ id: "inventory", onShelf: 7, backroom: 19, capacity: 24, lowThreshold: 4, version: 8, product, shelf: { id: "shelf", code: "T-02" }, store }] };

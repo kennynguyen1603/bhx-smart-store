@@ -13,11 +13,16 @@ type Forms = {
   "fefo-rule": [typeof schemas.fefoRuleCreateSchema, typeof schemas.fefoRuleEditSchema];
   user: [typeof schemas.userCreateSchema, typeof schemas.userEditSchema];
 };
+type ImmutableFields = {
+  store: { code: string };
+  product: { sku: string; barcode: string };
+  supplier: { code: string };
+};
 export type AdminEntityKind = keyof Forms | "inventory";
 export type AdminDialogDescriptor = {
   [Kind in keyof Forms]:
     | { kind: Kind; mode: "create"; defaultValues: Partial<z.input<Forms[Kind][0]>> }
-    | { kind: Kind; mode: "edit"; id: string; defaultValues: z.input<Forms[Kind][1]> }
+    | { kind: Kind; mode: "edit"; id: string; defaultValues: z.input<Forms[Kind][1]>; readOnlyValues?: Kind extends keyof ImmutableFields ? ImmutableFields[Kind] : never }
 }[keyof Forms] | { kind: "inventory"; mode: "edit"; id: string; defaultValues: schemas.InventoryValues };
 
 export type AdminConfirmDescriptor = {
@@ -31,6 +36,7 @@ export type AdminConfirmDescriptor = {
 
 /** A confirmed write succeeds independently of any subsequent overview refresh. */
 export type AdminSubmitResult = boolean | { ok: true } | { ok: false; error?: string };
+export type ApiMutationResult = { ok: true; data: unknown } | { ok: false; message: string };
 export type AdminDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
