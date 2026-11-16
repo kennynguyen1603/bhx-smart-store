@@ -124,20 +124,20 @@ async function main() {
   }
 
   const productData = [
-    { sku: "MILK-1L", barcode: "8934673574213", name: "Sữa tươi Vinamilk 100% 1L", category: "Sữa & đồ lạnh", unit: "Hộp", basePriceVnd: 32600, emoji: "🥛", supplier: "VNM", origin: "Việt Nam" },
-    { sku: "NOODLE-75", barcode: "8934563138167", name: "Mì Hảo Hảo tôm chua cay 75g", category: "Mì & thực phẩm khô", unit: "Gói", basePriceVnd: 4500, emoji: "🍜", supplier: "ACE", origin: "Việt Nam" },
-    { sku: "YOGURT-4", barcode: "8934673103222", name: "Sữa chua Vinamilk có đường lốc 4 hộp", category: "Sữa & đồ lạnh", unit: "Lốc", basePriceVnd: 31000, emoji: "🥣", supplier: "VNM", origin: "Việt Nam" },
-    { sku: "APPLE-1KG", barcode: "2900014825731", name: "Táo Gala nhập khẩu túi 1kg", category: "Rau củ & trái cây", unit: "Túi", basePriceVnd: 69900, emoji: "🍎", supplier: "FRESH", origin: "New Zealand" },
-    { sku: "OMO-36", barcode: "8934868179070", name: "Nước giặt OMO Matic cửa trên 3.6kg", category: "Chăm sóc nhà cửa", unit: "Túi", basePriceVnd: 189000, emoji: "🧴", supplier: "UNI", origin: "Việt Nam" },
-    { sku: "BREAD-300", barcode: "8938502520167", name: "Bánh mì sandwich lúa mạch 300g", category: "Bánh & đồ ăn nhanh", unit: "Gói", basePriceVnd: 28500, emoji: "🍞", supplier: "KDO", origin: "Việt Nam" },
-    { sku: "GREENS-500", barcode: "2900012345678", name: "Cải xanh VietGAP gói 500g", category: "Rau củ & trái cây", unit: "Gói", basePriceVnd: 17900, emoji: "🥬", supplier: "DALA", origin: "Đà Lạt, Việt Nam" },
+    { sku: "MILK-1L", barcode: "8934673574211", name: "Sữa tươi Vinamilk 100% 1L", category: "Sữa & đồ lạnh", unit: "Hộp", basePriceVnd: 32600, emoji: "🥛", supplier: "VNM", origin: "Việt Nam" },
+    { sku: "NOODLE-75", barcode: "8934563138165", name: "Mì Hảo Hảo tôm chua cay 75g", category: "Mì & thực phẩm khô", unit: "Gói", basePriceVnd: 4500, emoji: "🍜", supplier: "ACE", origin: "Việt Nam" },
+    { sku: "YOGURT-4", barcode: "8934673103220", name: "Sữa chua Vinamilk có đường lốc 4 hộp", category: "Sữa & đồ lạnh", unit: "Lốc", basePriceVnd: 31000, emoji: "🥣", supplier: "VNM", origin: "Việt Nam" },
+    { sku: "APPLE-1KG", barcode: "2900014825737", name: "Táo Gala nhập khẩu túi 1kg", category: "Rau củ & trái cây", unit: "Túi", basePriceVnd: 69900, emoji: "🍎", supplier: "FRESH", origin: "New Zealand" },
+    { sku: "OMO-36", barcode: "8934868179078", name: "Nước giặt OMO Matic cửa trên 3.6kg", category: "Chăm sóc nhà cửa", unit: "Túi", basePriceVnd: 189000, emoji: "🧴", supplier: "UNI", origin: "Việt Nam" },
+    { sku: "BREAD-300", barcode: "8938502520165", name: "Bánh mì sandwich lúa mạch 300g", category: "Bánh & đồ ăn nhanh", unit: "Gói", basePriceVnd: 28500, emoji: "🍞", supplier: "KDO", origin: "Việt Nam" },
+    { sku: "GREENS-500", barcode: "2900012345671", name: "Cải xanh VietGAP gói 500g", category: "Rau củ & trái cây", unit: "Gói", basePriceVnd: 17900, emoji: "🥬", supplier: "DALA", origin: "Đà Lạt, Việt Nam" },
     { sku: "ORANGE-1KG", barcode: "2900019876543", name: "Cam Navel Úc túi 1kg", category: "Rau củ & trái cây", unit: "Túi", basePriceVnd: 79900, emoji: "🍊", supplier: "TFRUIT", origin: "Úc" },
-    { sku: "EGGS-10", barcode: "8935054700017", name: "Trứng gà tươi C.P hộp 10 quả", category: "Trứng & thực phẩm mát", unit: "Hộp", basePriceVnd: 34500, emoji: "🥚", supplier: "CPV", origin: "Việt Nam" },
-    { sku: "CHEESE-8", barcode: "3073781164990", name: "Phô mai Con Bò Cười hộp 8 miếng", category: "Sữa & đồ lạnh", unit: "Hộp", basePriceVnd: 53500, emoji: "🧀", supplier: "BEL", origin: "Pháp" },
-    { sku: "RICE-ST25", barcode: "8936036024052", name: "Gạo thơm ST25 túi 5kg", category: "Mì & thực phẩm khô", unit: "Túi", basePriceVnd: 179000, emoji: "🍚", supplier: "LOC", origin: "Sóc Trăng, Việt Nam" },
-    { sku: "FISHSAUCE-750", barcode: "8936136160050", name: "Nước mắm Nam Ngư 750ml", category: "Gia vị & nước chấm", unit: "Chai", basePriceVnd: 52900, emoji: "🫙", supplier: "MSN", origin: "Việt Nam" },
-    { sku: "DISH-750", barcode: "8934868106878", name: "Nước rửa chén Sunlight lô hội 750g", category: "Chăm sóc nhà cửa", unit: "Chai", basePriceVnd: 32900, emoji: "🧽", supplier: "UNI", origin: "Việt Nam" },
-    { sku: "TISSUE-10", barcode: "8935001700237", name: "Giấy vệ sinh Bless You 10 cuộn", category: "Chăm sóc nhà cửa", unit: "Lốc", basePriceVnd: 74900, emoji: "🧻", supplier: "SGP", origin: "Việt Nam" },
+    { sku: "EGGS-10", barcode: "8935054700014", name: "Trứng gà tươi C.P hộp 10 quả", category: "Trứng & thực phẩm mát", unit: "Hộp", basePriceVnd: 34500, emoji: "🥚", supplier: "CPV", origin: "Việt Nam" },
+    { sku: "CHEESE-8", barcode: "3073781164992", name: "Phô mai Con Bò Cười hộp 8 miếng", category: "Sữa & đồ lạnh", unit: "Hộp", basePriceVnd: 53500, emoji: "🧀", supplier: "BEL", origin: "Pháp" },
+    { sku: "RICE-ST25", barcode: "8936036024050", name: "Gạo thơm ST25 túi 5kg", category: "Mì & thực phẩm khô", unit: "Túi", basePriceVnd: 179000, emoji: "🍚", supplier: "LOC", origin: "Sóc Trăng, Việt Nam" },
+    { sku: "FISHSAUCE-750", barcode: "8936136160054", name: "Nước mắm Nam Ngư 750ml", category: "Gia vị & nước chấm", unit: "Chai", basePriceVnd: 52900, emoji: "🫙", supplier: "MSN", origin: "Việt Nam" },
+    { sku: "DISH-750", barcode: "8934868106876", name: "Nước rửa chén Sunlight lô hội 750g", category: "Chăm sóc nhà cửa", unit: "Chai", basePriceVnd: 32900, emoji: "🧽", supplier: "UNI", origin: "Việt Nam" },
+    { sku: "TISSUE-10", barcode: "8935001700234", name: "Giấy vệ sinh Bless You 10 cuộn", category: "Chăm sóc nhà cửa", unit: "Lốc", basePriceVnd: 74900, emoji: "🧻", supplier: "SGP", origin: "Việt Nam" },
   ];
   const products = new Map<string, (typeof productData)[number] & { id: string }>();
   for (const item of productData) {

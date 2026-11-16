@@ -25,6 +25,7 @@ export default function HomePage() {
       <nav className="demo-links" aria-label="Demo bổ trợ">
         <Link href="/login?callbackUrl=/admin">Backoffice quản trị</Link>
         <Link href="/demo/esl-labels">Nhãn ESL demo</Link>
+        <Link href="/demo/barcodes">Mã vạch sản phẩm demo</Link>
       </nav>
     </main>
   );

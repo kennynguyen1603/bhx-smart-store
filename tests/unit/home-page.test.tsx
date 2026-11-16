@@ -18,11 +18,11 @@ it("presents exactly two primary product experiences under the shared-data hero"
   ]);
 });
 
-it("keeps Admin and printable ESL labels available as compact secondary links", () => {
+it("keeps Admin and printable demo labels available as compact secondary links", () => {
   const container = renderHome();
   const links = Array.from(container.querySelectorAll('nav[aria-label="Demo bổ trợ"] a'));
   expect(links.map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
-    ["Backoffice quản trị", "/login?callbackUrl=/admin"], ["Nhãn ESL demo", "/demo/esl-labels"],
+    ["Backoffice quản trị", "/login?callbackUrl=/admin"], ["Nhãn ESL demo", "/demo/esl-labels"], ["Mã vạch sản phẩm demo", "/demo/barcodes"],
   ]);
   expect(links.every((link) => !link.classList.contains("experience-card"))).toBe(true);
   expect(container.querySelector(".data-flow")).toBeNull();
