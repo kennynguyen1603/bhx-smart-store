@@ -10,7 +10,7 @@ export default function LoginPage() {
     <main className="auth-page">
       <section className="auth-visual">
         <Logo inverse />
-        <div><span className="eyebrow light">NHÂN VIÊN NỘI BỘ</span><h1>Dữ liệu đúng.<br />Nhiệm vụ đúng.<br /><em>Đúng thời điểm.</em></h1><p>Đăng nhập để truy cập cửa hàng được phân công và đồng bộ công việc của bạn.</p></div>
+        <div><h1>Dữ liệu đúng.<br />Nhiệm vụ đúng.<br /><em>Đúng thời điểm.</em></h1><p>Nhân viên thực hiện nhiệm vụ, quản lý giám sát cửa hàng, quản trị cấu hình hệ thống.</p></div>
         <small>BHX Smart In-store Operations</small>
       </section>
       <section className="auth-panel"><Suspense fallback={<p>Đang tải biểu mẫu đăng nhập…</p>}><LoginForm /></Suspense></section>

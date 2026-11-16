@@ -94,7 +94,7 @@ export function EslScannerModal({
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
       <section className="modal esl-scanner-modal">
         <button className="icon-button modal-close" onClick={close} aria-label="Đóng tra cứu ESL"><X /></button>
-        <header className="modal-head"><span className="section-label">STANDALONE SCAN</span><h2>Tra cứu ESL</h2><p>Quét nhãn hoặc nhập mã thiết bị để xem nhiệm vụ đang mở.</p></header>
+        <header className="modal-head"><h2>Tra cứu ESL</h2><p>Quét nhãn hoặc nhập mã thiết bị để xem nhiệm vụ đang mở.</p></header>
         <div className="modal-body">
           <BarcodeScanner label="Quét mã ESL" onDetected={(value) => { setCode(value); void lookup(value); }} />
           <form className="manual-scan esl-lookup-form" onSubmit={submit}>

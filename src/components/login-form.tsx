@@ -4,12 +4,7 @@ import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail } from "lucide-react";
 import { signIn } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 import { FormEvent, useState } from "react";
-
-const accounts = [
-  ["Staff", "staff@demo.bhx"],
-  ["Manager", "manager@demo.bhx"],
-  ["Admin", "admin@demo.bhx"],
-] as const;
+import { DEMO_ACCOUNTS, demoDestinationForEmail } from "@/lib/demo-roles";
 
 export function LoginForm() {
   const searchParams = useSearchParams();
@@ -21,7 +16,8 @@ export function LoginForm() {
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLoading(true); setError("");
-    const callbackUrl = searchParams.get("callbackUrl") || (email.startsWith("staff") ? "/staff" : "/admin");
+    const isDemoAccount = DEMO_ACCOUNTS.some((account) => account.email === email.trim().toLowerCase());
+    const callbackUrl = isDemoAccount ? demoDestinationForEmail(email) : searchParams.get("callbackUrl") || demoDestinationForEmail(email);
     const result = await signIn("credentials", { email, password, redirect: false, callbackUrl });
     setLoading(false);
     if (result?.error) setError("Email hoặc mật khẩu không đúng.");
@@ -30,8 +26,8 @@ export function LoginForm() {
 
   return (
     <div className="login-card">
-      <span className="eyebrow">ĐĂNG NHẬP BẢO MẬT</span><h2>Chào mừng trở lại</h2><p>Dùng một trong các tài khoản demo để tiếp tục.</p>
-      <div className="account-chips">{accounts.map(([label, value]) => <button type="button" key={value} className={email === value ? "active" : ""} onClick={() => setEmail(value)}>{label}</button>)}</div>
+      <h2>Chào mừng trở lại</h2><p>Chọn vai trò demo để tiếp tục.</p>
+      <div className="account-chips">{DEMO_ACCOUNTS.map((account) => <button type="button" key={account.email} className={email === account.email ? "active" : ""} aria-pressed={email === account.email} onClick={() => setEmail(account.email)}>{account.label} — {account.description}</button>)}</div>
       <form onSubmit={submit}>
         <label>Email<div className="input-wrap"><Mail /><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div></label>
         <label>Mật khẩu<div className="input-wrap"><LockKeyhole /><input type={visible ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required /><button type="button" onClick={() => setVisible(!visible)} aria-label="Hiện mật khẩu">{visible ? <EyeOff /> : <Eye />}</button></div></label>
