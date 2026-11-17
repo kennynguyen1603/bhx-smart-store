@@ -36,13 +36,17 @@ npx web-push generate-vapid-keys --json
 
 ## Tài khoản seed
 
-| Vai trò | Email | Mật khẩu mặc định |
-|---|---|---|
-| Staff | `staff@demo.bhx` | `Demo@123` |
-| Manager | `manager@demo.bhx` | `Demo@123` |
-| Admin | `admin@demo.bhx` | `Demo@123` |
+| Vai trò | Email | Mật khẩu mặc định | Trang đăng nhập được phép |
+|---|---|---|---|
+| Staff | `staff@demo.bhx` | `Demo@123` | `/staff/login` |
+| Manager | `manager@demo.bhx` | `Demo@123` | `/staff/login` hoặc `/admin/login` |
+| Admin | `admin@demo.bhx` | `Demo@123` | `/admin/login` |
 
 Có thể đổi mật khẩu seed bằng biến `DEMO_PASSWORD` trước khi chạy `npm run db:seed`.
+
+Chỉ chia sẻ tài khoản demo trong README này riêng với người test. Trang chủ, `/login` (chọn vai trò) và hai form đăng nhập không công khai hoặc điền sẵn email/mật khẩu. Staff/Manager đăng xuất từ ứng dụng nhân viên sẽ về `/staff/login`; Manager/Admin đăng xuất từ backoffice sẽ về `/admin/login`.
+
+Không dùng chung một phiên đăng nhập để thao tác đồng thời: các tab trong cùng hồ sơ trình duyệt chia sẻ cookie, nên đăng nhập/đăng xuất ở một tab ảnh hưởng tab khác. Khi test nhiều vai trò, dùng các hồ sơ trình duyệt hoặc BrowserContext riêng và đăng xuất khi xong. Các phiên vẫn dùng chung dữ liệu demo; tránh cùng sửa/hoàn thành một nhiệm vụ hoặc seed lại trong lúc người khác đang test.
 
 ## API tích hợp
 
@@ -83,6 +87,14 @@ npm run test:e2e
 ```
 
 Test integration dùng PostgreSQL trong `DATABASE_URL`. Bộ test bao phủ POS idempotency, tạo task/LED, RESTOCK transaction, mutation idempotency, version conflict, FEFO không tạo task trùng, lô hết hạn cách ly, kiosk search/map và đăng nhập Staff/Admin.
+
+Gate xác nhận đăng nhập, đăng xuất, typography và không lộ thông tin demo:
+
+```bash
+npm run typecheck && npm test && npm run build && npm run test:e2e -- --grep "login|logout|typography|public credentials"
+```
+
+Chạy tuần tự, không chạy integration và E2E cùng lúc trên một `DATABASE_URL`. Acceptance kiểm tra nội dung hiển thị lẫn HTML của `/`, `/login`, `/staff/login`, `/admin/login`; cả bốn cặp vai trò/trang được phép phải đăng nhập thành công, đăng xuất về đúng form và không còn phiên xác thực.
 
 GitHub Actions chạy PostgreSQL service, migration, seed, lint, typecheck, unit/integration, production build và E2E.
 

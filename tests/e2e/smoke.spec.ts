@@ -1729,17 +1729,48 @@ for (const admin of [false, true]) {
   });
 }
 
+for (const path of ["/", "/login", "/staff/login", "/admin/login"]) {
+  test(`public credentials stay absent from visible content and HTML at ${path}`, async ({ page }) => {
+    const response = await page.goto(path);
+    expect(response?.ok()).toBe(true);
+    await expect(page.locator("main")).toBeVisible();
+    const html = await response!.text();
+    for (const credential of ["staff@demo.bhx", "manager@demo.bhx", "admin@demo.bhx", "Demo@123"]) {
+      expect(html, `response HTML at ${path}`).not.toContain(credential);
+      expect(await page.content(), `rendered HTML at ${path}`).not.toContain(credential);
+      await expect(page.locator("body")).not.toContainText(credential);
+    }
+  });
+}
+
 for (const [role, audience] of [["staff", "staff"], ["manager", "staff"], ["manager", "admin"], ["admin", "admin"]] as const) {
-  test(`role login ${role} enters ${audience} with blank credentials`, async ({ page }) => {
-    await page.goto(`/${audience}/login`);
-    await expect(page.getByLabel("Email", { exact: true })).toHaveValue("");
-    await expect(page.getByLabel("Mật khẩu", { exact: true })).toHaveValue("");
-    await expect(page.locator("body")).not.toContainText(/@demo\.bhx|Demo@123/);
-    await page.getByLabel("Email", { exact: true }).fill(`${role}@demo.bhx`);
-    await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
-    await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
-    await expect(page).toHaveURL(url => url.pathname === `/${audience}`);
-    await expect(page.locator(".workspace-header h1")).toBeVisible();
+  test(`role login ${role} enters ${audience} with blank credentials and logout clears its session`, async ({ page }) => {
+    // Playwright gives each case its own context; verify no previous role can satisfy this login.
+    expect((await (await page.request.get("/api/auth/session")).json()).user).toBeUndefined();
+    try {
+      await page.goto(`/${audience}/login`);
+      await expect(page.getByLabel("Email", { exact: true })).toHaveValue("");
+      await expect(page.getByLabel("Mật khẩu", { exact: true })).toHaveValue("");
+      await expect(page.locator("body")).not.toContainText(/@demo\.bhx|Demo@123/);
+      await page.getByLabel("Email", { exact: true }).fill(`${role}@demo.bhx`);
+      await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
+      await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+      await expect(page).toHaveURL(url => url.pathname === `/${audience}`);
+      await expect(page.locator(".workspace-header h1")).toBeVisible();
+      const session = await (await page.request.get("/api/auth/session")).json();
+      expect(session.user).toMatchObject({ email: `${role}@demo.bhx`, role: role.toUpperCase() });
+
+      await page.getByRole("button", { name: "Đăng xuất", exact: true }).filter({ visible: true }).click();
+      await expect(page).toHaveURL(url => url.pathname === `/${audience}/login`);
+      expect((await (await page.request.get("/api/auth/session")).json()).user).toBeUndefined();
+      await expect(page.getByLabel("Email", { exact: true })).toHaveValue("");
+      await expect(page.getByLabel("Mật khẩu", { exact: true })).toHaveValue("");
+      await page.goto(`/${audience}`);
+      await expect(page).toHaveURL(url => url.pathname === `/${audience}/login`);
+    } finally {
+      // Also clear authentication if a failed assertion interrupts the UI logout.
+      await page.context().clearCookies();
+    }
   });
 }
 for (const [role, audience, correct] of [["staff", "admin", "staff"], ["admin", "staff", "admin"]] as const) {
