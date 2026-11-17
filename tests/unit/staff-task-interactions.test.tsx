@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { readFileSync } from "node:fs";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "next-auth";
@@ -24,9 +25,11 @@ const task: TaskSummary = {
   shelf: { id: "shelf-1", code: "K-01", label: "Kệ sữa", esls: [{ code: "ESL-01" }] }, lot: null,
   inventory: { id: "inventory-1", onShelf: 2, backroom: 10, capacity: 12, lowThreshold: 3, version: 4, product: { id: "product-1", name: "Sữa tươi", emoji: "🥛" }, shelf: { id: "shelf-1", code: "K-01", label: "Kệ sữa" } },
 };
+const stylesheet = readFileSync("src/app/globals.css", "utf8");
 let tasks: TaskSummary[];
 let container: HTMLDivElement;
 let root: Root;
+let style: HTMLStyleElement;
 let writes: { url: string; body: Record<string, unknown> }[];
 let startResponse: () => Promise<Response>;
 function button(text: string) {
@@ -48,9 +51,10 @@ beforeEach(() => {
     if (init?.method === "POST") { writes.push({ url: String(url), body: JSON.parse(String(init.body)) }); return startResponse(); }
     return Response.json({ stores: [{ id: "store-1", code: "BHX-01", name: "BHX Demo", address: "123 Demo" }], selectedStoreId: "store-1", tasks, inventories: [], notifications: [], recentEvents: [], metrics: { openTasks: 1, highPriority: 1, lowShelves: 1, fefoTasks: 0, completionRate: 0 } });
   }));
+  style = document.createElement("style"); style.textContent = stylesheet; document.head.append(style);
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); style.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("deliberate staff task interaction", () => {
   it.each(["STAFF", "MANAGER"] as const)("%s task destination selects details without a mutation", async role => {
@@ -101,6 +105,22 @@ describe("deliberate staff task interaction", () => {
     await render(); await click(container.querySelector<HTMLButtonElement>(".task-row")!); await click(button("Bắt đầu"));
     expect(container.querySelector(".staff-task-modal .product-summary")?.textContent).toContain("Mới");
     expect(button("Bắt đầu").disabled).toBe(false); expect(container.textContent).toContain("Nhiệm vụ đã được nhận");
+  });
+
+  it("places staff toast at the top-right and lets staff dismiss it", async () => {
+    startResponse = async () => Response.json({ error: { message: "Nhiệm vụ đã được nhận" } }, { status: 409 });
+    await render(); await click(container.querySelector<HTMLButtonElement>(".task-row")!); await click(button("Bắt đầu"));
+    const stack = container.querySelector<HTMLElement>(".toast-stack")!;
+    const stackStyle = getComputedStyle(stack);
+    expect(stackStyle.position).toBe("fixed");
+    expect(stackStyle.top).toBe("20px");
+    expect(stackStyle.right).toBe("20px");
+    expect(stackStyle.bottom).toBe("auto");
+    const close = container.querySelector<HTMLButtonElement>('[aria-label="Đóng thông báo"]')!;
+    expect(close).not.toBeNull();
+    expect(parseFloat(getComputedStyle(close).minHeight)).toBeGreaterThanOrEqual(44);
+    await click(close);
+    expect(container.querySelector(".toast-stack")).toBeNull();
   });
 
   it("keeps offline start queued through the existing mutation contract", async () => {
