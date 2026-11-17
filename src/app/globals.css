@@ -228,7 +228,7 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
   .workspace-header p,.connection-pill,.metric small,.panel-header p,.task-copy span,
   .task-meta time,.app-shell .badge,.product-summary small,.detail-box span,.scan-heading small,
   .scan-status,.scanner-placeholder small,.manual-scan-label span,.manual-scan-label small,
-  .data-table small,.log-row code,.log-row small,.log-row time,.eyebrow,.data-flow,.data-flow strong,
+  .data-table small,.admin-esl-row small,.log-row code,.log-row small,.log-row time,.eyebrow,.data-flow,.data-flow strong,
   .detail-help small,.walk-time small,.map-toolbar,.map-legend,.route-steps small,.route-steps b { font-size: var(--font-meta); line-height: 1.5; }
   .card-copy small { letter-spacing: .02em; text-transform: none; }
   .workspace-header h1 { font-size: 36px; line-height: 1.2; overflow-wrap: anywhere; }

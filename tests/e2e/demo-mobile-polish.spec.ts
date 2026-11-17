@@ -435,6 +435,18 @@ async function hitTargets(page: Page, selector: string) {
   }
 }
 
+for (const width of [320, 390, 1280]) {
+  test(`${width}px Admin attached ESL product names keep the metadata floor`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1024 });
+    await signIn(page, "admin");
+    await page.getByRole("button", { name: "Sơ đồ & ESL", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "ESL đã gắn", exact: true })).toBeVisible();
+    await readable(page, [".admin-esl-row small"], 12);
+    const sizes = await page.locator(".admin-esl-row small").evaluateAll(nodes => nodes.map(node => parseFloat(getComputedStyle(node).fontSize)));
+    console.info(`${width}px attached ESL metadata: ${JSON.stringify({ count: sizes.length, min: Math.min(...sizes), max: Math.max(...sizes) })}`);
+  });
+}
+
 for (const width of [320, 390, 768, 1280]) {
   test(`${width}px key screens preserve readable typography, hit boxes and page width`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1024 });
