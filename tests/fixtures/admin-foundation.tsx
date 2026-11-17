@@ -20,7 +20,14 @@ function FoundationFixture() {
     <button id="fallback" ref={fallback}>Danh sách cửa hàng</button>
     <div ref={nonfocusable}>Thông tin</div>
     {host.dataset.kind === "confirm" ? <AdminConfirmDialog {...dialog} />
-      : <AdminEntityDialog {...dialog}><input aria-label="Tên" defaultValue="BHX Quận 2" /></AdminEntityDialog>}
+      : <AdminEntityDialog {...dialog}>
+        {host.dataset.kind === "tall-entity"
+          ? Array.from({ length: 12 }, (_, i) => <div className="ui-form-item" key={i}>
+            <label htmlFor={`field-${i}`}>Trường {i + 1}</label>
+            <input id={`field-${i}`} defaultValue={`Giá trị ${i + 1}`} />
+          </div>)
+          : <input aria-label="Tên" defaultValue="BHX Quận 2" />}
+      </AdminEntityDialog>}
     <div style={{ width: 160, marginTop: 40 }}>
       <Select><SelectTrigger aria-label="Chọn sản phẩm"><SelectValue placeholder="Sản phẩm" /></SelectTrigger>
         <SelectContent position="popper" style={{ maxHeight: 240 }}>

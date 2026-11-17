@@ -34,6 +34,46 @@ async function expectMobileTarget(locator: Locator) {
   expect(Math.round(box!.height * 100) / 100).toBeGreaterThanOrEqual(44);
   await expect(locator).toHaveCSS("flex-shrink", "0");
 }
+
+test("long admin entity form keeps actions visible and body scrollable", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 320 });
+  await mount(page, "tall-entity");
+  await page.getByRole("button", { name: "Mở biểu mẫu" }).click();
+  const dialog = page.getByRole("dialog");
+  const body = dialog.locator(".admin-dialog-body");
+  const header = dialog.locator(".ui-dialog-header");
+  const footer = dialog.locator(".ui-dialog-footer");
+  const save = footer.getByRole("button", { name: "Lưu", exact: true });
+  const cancel = footer.getByRole("button", { name: "Hủy", exact: true });
+  await expect(dialog).toBeInViewport({ ratio: 1 });
+  const bounds = await dialog.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(320);
+  const measurements = await body.evaluate(element => ({
+    scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
+    scrollTop: element.scrollTop, overflowY: getComputedStyle(element).overflowY,
+  }));
+  await testInfo.attach("initial dialog measurements", {
+    body: JSON.stringify({ bounds, body: measurements }), contentType: "application/json",
+  });
+  await expect(header).toBeInViewport({ ratio: 1 });
+  await expect(save).toBeInViewport({ ratio: 1 });
+  await expect(cancel).toBeInViewport({ ratio: 1 });
+  expect(measurements.scrollHeight).toBeGreaterThan(measurements.clientHeight);
+  await expect(body).toHaveCSS("overflow-y", "auto");
+  await expect(dialog.getByLabel("Trường 12", { exact: true })).not.toBeInViewport();
+  await dialog.getByLabel("Trường 1", { exact: true }).hover();
+  await page.mouse.wheel(0, 10_000);
+  await expect.poll(() => body.evaluate(element => element.scrollTop)).toBeGreaterThan(measurements.scrollTop);
+  await expect(dialog.getByLabel("Trường 12", { exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(header).toBeInViewport({ ratio: 1 });
+  await expect(footer).toBeInViewport({ ratio: 1 });
+  await expect(save).toBeInViewport({ ratio: 1 });
+  await expect(cancel).toBeInViewport({ ratio: 1 });
+});
+
 for (const width of [320, 390, 760]) {
   test(`Select scroll targets are at least 44px at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 600 });

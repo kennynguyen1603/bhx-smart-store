@@ -60,8 +60,10 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .ui-dialog-footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px}
 .ui-dialog-close{position:absolute;right:8px;top:8px}
 .admin-dialog-content{overflow:hidden}
-.admin-dialog-form{display:flex;flex-direction:column;gap:20px;min-height:0;overflow:hidden}
-.admin-dialog-body{display:grid;gap:16px;min-width:0;min-height:0;margin:0;padding:3px 4px 6px;border:0;overflow-y:auto}
+.ui-dialog-content.admin-dialog-content{grid-template-rows:auto minmax(0,1fr)}
+.admin-dialog-form{display:flex;flex-direction:column;gap:20px;height:100%;min-height:0;overflow:hidden}
+.admin-dialog-body{display:grid;flex:1 1 auto;gap:16px;min-width:0;min-height:0;margin:0;padding:3px 4px 6px;border:0;overflow-y:auto}
+.admin-dialog-form .ui-dialog-footer{flex-shrink:0}
 .ui-form-item{display:grid;gap:7px;min-width:0}
 .ui-form-description,.ui-form-message{margin:0;font-size:13px;line-height:1.5}
 .ui-form-description{color:var(--muted)}.ui-form-message,.ui-form-label-error{color:var(--red)}
