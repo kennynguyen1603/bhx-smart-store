@@ -198,7 +198,7 @@ export function StaffApp({ user, initialStoreId, initialTaskId }: { user: Sessio
     return tasks.filter((task) => task.type === filter);
   }, [data, filter]);
 
-  async function mutation(url: string, body: Record<string, unknown>, success: string) {
+  async function mutation(url: string, body: Record<string, unknown>, success: string | ((result: { resolution?: "ALREADY_APPLIED" }) => string)): Promise<boolean | "queued"> {
     const id = String(body.clientMutationId || uuid());
     const payload = { ...body, clientMutationId: id };
     if (!navigator.onLine) {
@@ -206,7 +206,8 @@ export function StaffApp({ user, initialStoreId, initialTaskId }: { user: Sessio
     }
     const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     if (!response.ok) { const result = await response.json().catch(() => null); notify(result?.error?.message || "Không thể cập nhật", true); return false; }
-    notify(success); await load(true); return true;
+    const result = await response.json().catch(() => null);
+    notify(typeof success === "function" ? success(result ?? {}) : success); await load(true); return true;
   }
 
   async function verifyEsl() {
@@ -223,7 +224,7 @@ export function StaffApp({ user, initialStoreId, initialTaskId }: { user: Sessio
     if (selected.type === "RESTOCK") {
       if (!scanned || !selected.inventory) { notify("Hãy quét và xác minh ESL trước.", true); return; }
       ok = await mutation(`/api/staff/tasks/${selected.id}/restock`, { quantity, expectedVersion: selected.inventory.version, clientMutationId: uuid() }, "Đã cập nhật tồn kệ và tắt LED.");
-    } else ok = await mutation(`/api/staff/tasks/${selected.id}/fefo`, { clientMutationId: uuid() }, selected.type === "QUARANTINE" ? "Đã cách ly lô hết hạn." : "Đã áp dụng nhãn FEFO.");
+    } else ok = await mutation(`/api/staff/tasks/${selected.id}/fefo`, { clientMutationId: uuid() }, selected.type === "QUARANTINE" ? "Đã cách ly lô hết hạn." : (result) => result.resolution === "ALREADY_APPLIED" ? "Nhiệm vụ đã được đóng vì lô đã có mức giảm giá phù hợp." : "Đã áp dụng nhãn FEFO.");
     if (ok) { setSelected(null); setScanned(false); setScanCode(""); }
   }
 

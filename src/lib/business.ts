@@ -328,10 +328,43 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
     const days = daysUntilStoreDate(task.lot.expiryDate, now, task.store.timeZone);
     const rule = await tx.fefoRule.findFirst({ where: { storeId: task.storeId, active: true, daysRemaining: { gte: days } }, orderBy: { daysRemaining: "asc" } });
     const quarantine = task.type === TaskType.QUARANTINE || days <= 0 || rule?.quarantine === true;
+    const lotId = task.lot.id;
+    const cancelSuperseded = async (discountPercent: number) => {
+      // Keep the current lot sellable through cancellation without changing its data.
+      // The task row is claimed first on every path to preserve lock ordering.
+      await tx.$queryRaw`SELECT id FROM "Lot" WHERE id = ${lotId} FOR UPDATE`;
+      const currentLot = await tx.lot.findUniqueOrThrow({ where: { id: lotId } });
+      if ((currentLot.status !== LotStatus.AVAILABLE && currentLot.status !== LotStatus.MARKED_DOWN) || currentLot.quantity <= 0) {
+        throw new ApiError(409, "Lô không còn đủ điều kiện bán để giảm giá", "LOT_NOT_SELLABLE");
+      }
+      if ((currentLot.markdownPercent ?? 0) < discountPercent) return null;
+      const note = `Không cần xử lý: lô đã giảm ${currentLot.markdownPercent}%, bằng hoặc cao hơn quy tắc ${discountPercent}%.`;
+      const cancelled = await tx.task.updateMany({
+        where: {
+          id: task.id,
+          status: { in: FEFO_COMPLETABLE_TASKS },
+          ...(user.role === Role.STAFF ? { OR: [{ assigneeId: null }, { assigneeId: user.id }] } : {}),
+        },
+        data: { status: TaskStatus.CANCELLED, assigneeId: user.id, completedAt: null, note },
+      });
+      if (cancelled.count !== 1) {
+        const current = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
+        assertTaskClaimable(current, user);
+        throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+      }
+      const updatedTask = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
+      await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: "CANCELLED", note } });
+      const activeSibling = await tx.task.findFirst({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId, status: { in: ACTIVE_TASKS } }, select: { id: true } });
+      await tx.eSL.updateMany({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId }, data: { ledOn: activeSibling !== null } });
+      await tx.auditLog.create({ data: { actorId: user.id, storeId: task.storeId, action: "FEFO_TASK_SUPERSEDED", entityType: "Task", entityId: task.id, before: json({ status: task.status, assigneeId: task.assigneeId, note: task.note }), after: json({ status: updatedTask.status, assigneeId: updatedTask.assigneeId, note }) } });
+      const response = { resolution: "ALREADY_APPLIED" as const, task: { id: updatedTask.id, status: updatedTask.status, note }, lot: { id: currentLot.id, status: currentLot.status, markdownPercent: currentLot.markdownPercent, markdownPriceVnd: currentLot.markdownPriceVnd } };
+      await tx.mutationReceipt.create({ data: { clientMutationId, userId: user.id, action: "FEFO_COMPLETE", response: json(response) } });
+      return { response, recipients: [] as string[], task: updatedTask };
+    };
     if (!quarantine) {
       if (!rule) throw new ApiError(422, "Không có quy tắc FEFO phù hợp", "FEFO_RULE_NOT_FOUND");
-      if ((task.lot.markdownPercent ?? 0) >= rule.discountPercent) {
-        throw new ApiError(409, "Lô đã có mức giảm giá bằng hoặc cao hơn quy tắc hiện tại", "MARKDOWN_NOT_UPGRADABLE");
+      if ((task.lot.status !== LotStatus.AVAILABLE && task.lot.status !== LotStatus.MARKED_DOWN) || task.lot.quantity <= 0) {
+        throw new ApiError(409, "Lô không còn đủ điều kiện bán để giảm giá", "LOT_NOT_SELLABLE");
       }
     }
     const claimed = await tx.task.updateMany({
@@ -340,12 +373,17 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
         status: { in: FEFO_COMPLETABLE_TASKS },
         ...(user.role === Role.STAFF ? { OR: [{ assigneeId: null }, { assigneeId: user.id }] } : {}),
       },
-      data: { status: TaskStatus.COMPLETED, assigneeId: user.id, completedAt: new Date() },
+      // Hold the task claim while deciding whether the lot needs an upgrade.
+      data: { assigneeId: user.id },
     });
     if (claimed.count !== 1) {
       const current = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
       assertTaskClaimable(current, user);
       throw new ApiError(409, "Nhiệm vụ đã kết thúc", "INVALID_TASK_STATE");
+    }
+    if (!quarantine && rule && (task.lot.markdownPercent ?? 0) >= rule.discountPercent) {
+      const superseded = await cancelSuperseded(rule.discountPercent);
+      if (superseded) return superseded;
     }
     let lot;
     if (quarantine) {
@@ -369,12 +407,16 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
         if ((currentLot.status !== LotStatus.AVAILABLE && currentLot.status !== LotStatus.MARKED_DOWN) || currentLot.quantity <= 0) {
           throw new ApiError(409, "Lô không còn đủ điều kiện bán để giảm giá", "LOT_NOT_SELLABLE");
         }
+        if ((currentLot.markdownPercent ?? 0) >= rule.discountPercent) {
+          const superseded = await cancelSuperseded(rule.discountPercent);
+          if (superseded) return superseded;
+        }
         throw new ApiError(409, "Lô đã có mức giảm giá bằng hoặc cao hơn quy tắc hiện tại", "MARKDOWN_NOT_UPGRADABLE");
       }
       lot = await tx.lot.findUniqueOrThrow({ where: { id: task.lot.id } });
       await tx.markdown.create({ data: { lotId: lot.id, discountPercent: rule.discountPercent, originalPriceVnd: task.product.basePriceVnd, markdownPriceVnd } });
     }
-    const updatedTask = await tx.task.update({ where: { id: task.id }, data: { note: quarantine ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });
+    const updatedTask = await tx.task.update({ where: { id: task.id }, data: { status: TaskStatus.COMPLETED, completedAt: new Date(), note: quarantine ? `Đã cách ly lô ${lot.batchCode}` : `Đã dán nhãn giảm ${lot.markdownPercent}% cho lô ${lot.batchCode}` } });
     await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: "COMPLETED", note: updatedTask.note } });
     await tx.eSL.updateMany({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId }, data: { ledOn: false } });
     const recipients = await createOutcomeNotifications(tx, updatedTask, "COMPLETED");
@@ -383,7 +425,7 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
     await tx.mutationReceipt.create({ data: { clientMutationId, userId: user.id, action: "FEFO_COMPLETE", response: json(response) } });
     return { response, recipients, task: updatedTask };
   });
-  await sendOutcomePush(outcome.recipients, outcome.task);
+  if (outcome.task.status === TaskStatus.COMPLETED) await sendOutcomePush(outcome.recipients, outcome.task);
   return outcome.response;
 }
 

@@ -113,6 +113,25 @@ describe("deliberate staff task interaction", () => {
     expect(container.querySelector(".staff-task-modal .product-summary")?.textContent).toContain("Mới");
   });
 
+  // Catches treating superseded FEFO work as a new markdown instead of acknowledging closure.
+  it("closes superseded FEFO details, reloads tasks and explains why the task was closed", async () => {
+    tasks = [{ ...structuredClone(task), type: "FEFO", title: "Dán nhãn FEFO sữa", inventory: null, lot: { batchCode: "LOT-FEFO-01", expiryDate: "2026-11-20T00:00:00Z", quantity: 4, origin: "Việt Nam", markdownPercent: 30, supplier: { name: "Nhà cung cấp Demo" } } }];
+    startResponse = async () => {
+      const id = tasks[0].id;
+      tasks = [];
+      return Response.json({ resolution: "ALREADY_APPLIED", task: { id, status: "CANCELLED", note: "Không cần xử lý: lô đã giảm 30%, bằng hoặc cao hơn quy tắc 20%." }, lot: { id: "lot-1", status: "MARKED_DOWN", markdownPercent: 30, markdownPriceVnd: 11900 } });
+    };
+    await render();
+    await click(container.querySelector<HTMLButtonElement>(".task-row")!);
+    expect(container.querySelector(".staff-task-modal h2")?.textContent).toBe("Dán nhãn FEFO sữa");
+    await click(button("Xác nhận đã dán nhãn"));
+    expect(writes).toEqual([{ url: "/api/staff/tasks/task-1/fefo", body: { clientMutationId: expect.any(String) } }]);
+    expect(container.querySelector(".staff-task-modal")).toBeNull();
+    expect(container.querySelector(".task-row")).toBeNull();
+    expect(container.querySelector(".toast")?.textContent).toContain("Nhiệm vụ đã được đóng vì lô đã có mức giảm giá phù hợp.");
+    expect(container.querySelector(".toast")?.textContent).not.toContain("Đã áp dụng nhãn FEFO.");
+  });
+
   it("renders all five Vietnamese status badges alongside priority", async () => {
     tasks = (["OPEN", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED"] as const).map((status) => ({ ...task, id: status, title: status, status }));
     await render(); await click(container.querySelectorAll<HTMLButtonElement>(".side-nav button")[1]); await click(button("Bổ sung"));

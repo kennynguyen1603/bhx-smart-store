@@ -302,11 +302,13 @@ describe("FEFO engine", () => {
     { status: "SOLD_OUT" as const, quantity: 4 },
     { status: "AVAILABLE" as const, quantity: 0 },
     { status: "MARKED_DOWN" as const, quantity: -1 },
-  ])("does not revive an ineligible $status lot with quantity $quantity", async ({ status, quantity }) => {
+    { status: "QUARANTINED" as const, quantity: 4, markdownPercent: 30 },
+    { status: "MARKED_DOWN" as const, quantity: 0, markdownPercent: 30 },
+  ])("does not revive an ineligible $status lot with quantity $quantity", async ({ status, quantity, markdownPercent }) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
     const { lot, task } = await createFefoFixture("2026-11-17");
-    const before = await prisma.lot.update({ where: { id: lot.id }, data: { status, quantity } });
+    const before = await prisma.lot.update({ where: { id: lot.id }, data: { status, quantity, markdownPercent } });
     await prisma.eSL.update({ where: { code: "ESL-TST-01" }, data: { ledOn: true } });
     const mutationId = randomUUID();
     await expect(completeFefoTask(task.id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, mutationId))
@@ -320,10 +322,10 @@ describe("FEFO engine", () => {
     expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(true);
   });
 
-  it("does not revive a lot quarantined by a concurrent completion after the markdown snapshot", async () => {
+  it.each([null, 30])("does not revive or supersede a lot with %s percent markdown quarantined after the task snapshot", async (markdownPercent) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-16T08:00:00Z"));
-    const { lot, task } = await createFefoFixture("2026-11-17");
+    const { lot, task } = await createFefoFixture("2026-11-17", markdownPercent);
     const quarantineTask = await prisma.task.create({ data: {
       storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId,
       lotId: lot.id, type: TaskType.QUARANTINE, title: "Concurrent quarantine",
@@ -364,7 +366,7 @@ describe("FEFO engine", () => {
       const [result] = await markdownResult;
       expect(result.status).toBe("rejected");
       if (result.status === "rejected") expect(result.reason).toMatchObject({ status: 409, code: "LOT_NOT_SELLABLE" });
-      expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "QUARANTINED", markdownPercent: null, markdownPriceVnd: null });
+      expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "QUARANTINED", markdownPercent, markdownPriceVnd: markdownPercent === null ? null : 7_000 });
       expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
       expect(await prisma.task.findUniqueOrThrow({ where: { id: quarantineTask.id } })).toMatchObject({ status: TaskStatus.COMPLETED });
       expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
@@ -380,21 +382,41 @@ describe("FEFO engine", () => {
     }
   });
 
-  it.each([20, 30])("rejects an existing %i percent markdown when the store-day rule allows only 20 percent without side effects", async (percent) => {
+  // Catches obsolete tasks rejecting or mutating an already sufficient lot instead of closing once.
+  it.each([20, 30])("cancels a superseded task for an existing %i percent markdown without changing the lot", async (percent) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
     const { lot, task } = await createFefoFixture("2026-11-20", percent);
+    const historical = await prisma.markdown.create({ data: { lotId: lot.id, discountPercent: percent, originalPriceVnd: 10_000, markdownPriceVnd: percent === 20 ? 8_000 : 7_000 } });
     const [staff] = await getCompetingStaff();
+    const user = { id: staff.id, role: Role.STAFF, storeIds: [fixture.storeId] };
     await prisma.eSL.update({ where: { code: "ESL-TST-01" }, data: { ledOn: true } });
     const clientMutationId = randomUUID();
-    await expect(completeFefoTask(task.id, { id: staff.id, role: Role.STAFF, storeIds: [fixture.storeId] }, clientMutationId))
-      .rejects.toMatchObject({ status: 409, code: "MARKDOWN_NOT_UPGRADABLE" });
-    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
+    const result = await completeFefoTask(task.id, user, clientMutationId);
+    const note = `Không cần xử lý: lô đã giảm ${percent}%, bằng hoặc cao hơn quy tắc 20%.`;
+    expect(result).toEqual({ resolution: "ALREADY_APPLIED", task: { id: task.id, status: "CANCELLED", note }, lot: { id: lot.id, status: "MARKED_DOWN", markdownPercent: percent, markdownPriceVnd: percent === 20 ? 8_000 : 7_000 } });
+    await expect(completeFefoTask(task.id, user, clientMutationId)).resolves.toEqual(result);
+    await expect(completeFefoTask(task.id, user, randomUUID())).rejects.toMatchObject({ status: 409, code: "INVALID_TASK_STATE" });
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: TaskStatus.CANCELLED, assigneeId: staff.id, note, completedAt: null });
     expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toEqual(lot);
-    expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
-    expect(await prisma.taskEvent.count({ where: { taskId: task.id } })).toBe(0);
-    expect(await prisma.auditLog.count({ where: { entityId: lot.id } })).toBe(0);
-    expect(await prisma.mutationReceipt.count({ where: { clientMutationId } })).toBe(0);
+    expect(await prisma.markdown.findMany({ where: { lotId: lot.id } })).toEqual([historical]);
+    expect(await prisma.taskEvent.findMany({ where: { taskId: task.id } })).toMatchObject([{ type: "CANCELLED", actorId: staff.id, note }]);
+    expect(await prisma.auditLog.findMany({ where: { storeId: fixture.storeId } })).toMatchObject([{ action: "FEFO_TASK_SUPERSEDED", entityType: "Task", entityId: task.id, actorId: staff.id }]);
+    expect(await prisma.mutationReceipt.findMany({ where: { clientMutationId } })).toMatchObject([{ userId: staff.id, action: "FEFO_COMPLETE", response: result }]);
+    expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(false);
+    expect(await prisma.notification.count({ where: { taskId: task.id } })).toBe(0);
+    expect(outcomePush.send).not.toHaveBeenCalled();
+  });
+
+  // Catches clearing an ESL that still represents actionable work on the same shelf/product.
+  it("keeps the ESL on when cancelling a superseded task with an active sibling", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
+    const { task } = await createFefoFixture("2026-11-20", 20);
+    const sibling = await prisma.task.create({ data: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK, status: TaskStatus.BLOCKED, title: "Remaining shelf work" } });
+    await prisma.eSL.update({ where: { code: "ESL-TST-01" }, data: { ledOn: true } });
+    await completeFefoTask(task.id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, randomUUID());
+    expect(await prisma.task.findUniqueOrThrow({ where: { id: sibling.id } })).toEqual(sibling);
     expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(true);
   });
 
@@ -481,22 +503,30 @@ describe("FEFO engine", () => {
 
       transaction.mockRestore();
       expect(reads).toBe(2);
-      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-      const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-      expect(rejected?.reason).toMatchObject({ status: 409, code: distinctTasks ? "MARKDOWN_NOT_UPGRADABLE" : "INVALID_TASK_STATE" } satisfies Partial<ApiError>);
-      const winnerIndex = results.findIndex((result) => result.status === "fulfilled");
-      const winningTask = tasks[winnerIndex];
-      expect(await prisma.task.findUniqueOrThrow({ where: { id: winningTask.id } })).toMatchObject({ status: TaskStatus.COMPLETED, assigneeId: user.id });
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(distinctTasks ? 2 : 1);
+      if (!distinctTasks) {
+        const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+        expect(rejected?.reason).toMatchObject({ status: 409, code: "INVALID_TASK_STATE" } satisfies Partial<ApiError>);
+      }
+      const savedTasks = await prisma.task.findMany({ where: { id: { in: tasks.map((candidate) => candidate.id) } } });
+      expect(savedTasks.filter((candidate) => candidate.status === TaskStatus.COMPLETED)).toHaveLength(1);
+      const winningTask = savedTasks.find((candidate) => candidate.status === TaskStatus.COMPLETED)!;
+      const winnerIndex = distinctTasks ? tasks.findIndex((candidate) => candidate.id === winningTask.id) : results.findIndex((result) => result.status === "fulfilled");
+      expect(winningTask.assigneeId).toBe(user.id);
       if (distinctTasks) {
-        const losingTask = tasks[1 - winnerIndex];
-        expect(await prisma.task.findUniqueOrThrow({ where: { id: losingTask.id } })).toEqual(losingTask);
-        expect(await prisma.taskEvent.count({ where: { taskId: losingTask.id } })).toBe(0);
+        const cancelled = savedTasks.filter((candidate) => candidate.status === TaskStatus.CANCELLED);
+        expect(cancelled).toHaveLength(1);
+        expect(cancelled[0]).toMatchObject({ assigneeId: user.id, note: "Không cần xử lý: lô đã giảm 30%, bằng hoặc cao hơn quy tắc 30%." });
+        expect((results[1 - winnerIndex] as PromiseFulfilledResult<unknown>).value).toMatchObject({ resolution: "ALREADY_APPLIED", task: { id: cancelled[0].id, status: "CANCELLED" } });
+        expect(await prisma.taskEvent.count({ where: { taskId: cancelled[0].id, type: "CANCELLED" } })).toBe(1);
+        expect(await prisma.auditLog.count({ where: { entityId: cancelled[0].id, action: "FEFO_TASK_SUPERSEDED" } })).toBe(1);
+        await expect(completeFefoTask(cancelled[0].id, user, mutationIds[1 - winnerIndex])).resolves.toEqual((results[1 - winnerIndex] as PromiseFulfilledResult<unknown>).value);
       }
       expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toMatchObject({ status: "MARKED_DOWN", markdownPercent: 30, markdownPriceVnd: 7_000 });
       expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(1);
       expect(await prisma.taskEvent.count({ where: { taskId: { in: tasks.map((candidate) => candidate.id) }, type: "COMPLETED" } })).toBe(1);
       expect(await prisma.auditLog.count({ where: { entityId: lot.id, action: "FEFO_MARKDOWN" } })).toBe(1);
-      expect(await prisma.mutationReceipt.count({ where: { clientMutationId: { in: mutationIds } } })).toBe(1);
+      expect(await prisma.mutationReceipt.count({ where: { clientMutationId: { in: mutationIds } } })).toBe(distinctTasks ? 2 : 1);
       await expect(completeFefoTask(winningTask.id, user, mutationIds[winnerIndex])).resolves.toEqual((results[winnerIndex] as PromiseFulfilledResult<unknown>).value);
       await expect(completeFefoTask(winningTask.id, user, randomUUID())).rejects.toMatchObject({ status: 409, code: "INVALID_TASK_STATE" });
       expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(1);
