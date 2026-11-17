@@ -27,3 +27,22 @@ export function safeAudienceCallback(audience: LoginAudience, callbackUrl?: stri
     return fallback;
   }
 }
+
+// A store-wide push can arrive at the other role's entry point. Carry only task
+// identifiers across that recovery; never forward arbitrary callback parameters.
+export function safeAudienceTaskCallback(audience: LoginAudience, callbackUrl?: string): string {
+  const source: LoginAudience = audience === "admin" ? "staff" : "admin";
+  const callback = safeAudienceCallback(source, callbackUrl);
+  const url = new URL(callback, "https://callback.invalid");
+  if (url.pathname !== `/${source}`) return `/${audience}`;
+  const context = new URLSearchParams();
+  for (const key of ["storeId", "task"]) {
+    const values = url.searchParams.getAll(key);
+    if (values.length > 1 || [...url.searchParams.keys()].some(name => name.startsWith(`${key}[`))) return `/${audience}`;
+    if (values.length) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(values[0])) return `/${audience}`;
+      context.set(key, values[0]);
+    }
+  }
+  return safeAudienceCallback(audience, `/${audience}${context.size ? `?${context}` : ""}`);
+}

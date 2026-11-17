@@ -149,7 +149,14 @@ for (const width of [320, 390, 760, 1280]) {
       await expect(page.locator(".workspace-header h1")).toHaveText("Tổng quan");
       const logout = page.getByRole("button", { name: "Đăng xuất", exact: true }).filter({ visible: true });
       await expect(logout).toHaveCount(1); await expect(logout).toBeVisible();
-      if (width > 760) await expect(logout).toHaveText("Đăng xuất");
+      await expect(logout).toHaveText("Đăng xuất");
+      await expect(logout.locator("span")).toBeVisible();
+      const labelStyle = await logout.locator("span").evaluate(el => {
+        const style = getComputedStyle(el), b = el.getBoundingClientRect();
+        return { width: b.width, height: b.height, fontSize: parseFloat(style.fontSize), opacity: style.opacity };
+      });
+      expect(labelStyle.width).toBeGreaterThan(0); expect(labelStyle.height).toBeGreaterThan(0);
+      expect(labelStyle.fontSize).toBeGreaterThanOrEqual(14); expect(labelStyle.opacity).toBe("1");
       await expectMobileTarget(logout);
       const targets = [logout, page.locator(".notification-button"), page.getByRole("button", { name: "Tải lại dữ liệu", exact: true })];
       const boxes = [];
@@ -167,7 +174,9 @@ for (const width of [320, 390, 760, 1280]) {
       const viewport = await page.evaluate(() => ({ body: document.body.scrollWidth, document: document.documentElement.scrollWidth, viewport: innerWidth }));
       expect(viewport.body).toBeLessThanOrEqual(width); expect(viewport.document).toBeLessThanOrEqual(width);
       await testInfo.attach("header measurements", { body: JSON.stringify({ width, role, boxes, viewport }), contentType: "application/json" });
-      await page.screenshot({ path: `/tmp/auth-task2-${role}-${width}.png`, fullPage: true });
+      const screenshot = `/tmp/auth-final-${role}-${width}.png`;
+      await page.screenshot({ path: screenshot, fullPage: true });
+      await testInfo.attach("visible logout and session controls", { path: screenshot, contentType: "image/png" });
       let signouts = 0; page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/auth/signout") signouts++; });
       await logout.click(); await expect(page).toHaveURL(url => url.pathname === "/admin/login");
       expect(signouts).toBe(1); expect((await (await page.request.get("/api/auth/session")).json()).user).toBeUndefined();

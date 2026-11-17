@@ -4,6 +4,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import StaffPage from "@/app/staff/page";
 import AdminPage from "@/app/admin/page";
 import LoginPage from "@/app/login/page";
+import StaffLoginPage from "@/app/staff/login/page";
+import AdminLoginPage from "@/app/admin/login/page";
 const { getServerSession } = vi.hoisted(() => ({ getServerSession: vi.fn() }));
 vi.mock("next-auth", () => ({ getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
@@ -11,6 +13,11 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error
 vi.mock("@/components/staff-app", () => ({ StaffApp: () => null }));
 vi.mock("@/components/admin-app", () => ({ AdminApp: () => null }));
 beforeEach(() => getServerSession.mockReset().mockResolvedValue(null));
+
+it.each([StaffLoginPage, AdminLoginPage])("drops array callback parameters before rendering the role form", async Page => {
+  const element = await Page({ searchParams: Promise.resolve({ callbackUrl: ["/staff?storeId=store-2&task=task-7", "https://evil.example"] }) });
+  expect(element.props.children.props.callbackUrl).toBeUndefined();
+});
 
 it.each([["staff", StaffPage], ["admin", AdminPage]] as const)("guards unauthenticated %s with audience login retaining task context", async (path, Page) => {
   await expect(Page({ searchParams: Promise.resolve({ storeId: "store-2", task: "task-7" }) })).rejects.toThrow(`redirect:/${path}/login?callbackUrl=${encodeURIComponent(`/${path}?storeId=store-2&task=task-7`)}`);

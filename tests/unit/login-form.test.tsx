@@ -76,6 +76,26 @@ it("ignores unsafe callback and provider response URL", async () => {
   expect(window.location.pathname).toBe("/staff");
   expect(signIn.mock.calls[0][1].callbackUrl).toBe("/staff");
 });
+it.each([
+  ["/staff?storeId=store-2&task=task-7&redirect=https://evil.example", "/admin/login?callbackUrl=%2Fadmin%3FstoreId%3Dstore-2%26task%3Dtask-7"],
+  ["/staff?task=task-7", "/admin/login?callbackUrl=%2Fadmin%3Ftask%3Dtask-7"],
+  ["https://evil.example/staff?storeId=store-2&task=task-7", "/admin/login"],
+  ["//evil.example/staff?storeId=store-2&task=task-7", "/admin/login"],
+  ["/staff?storeId=store-2&task=%", "/admin/login"],
+  ["/staff?storeId=one&storeId=two&task=task-7", "/admin/login"],
+  ["/staff?storeId=store-2&task=one&task=two", "/admin/login"],
+  ["/staff?storeId=https%3A%2F%2Fevil.example&task=task-7", "/admin/login"],
+  ["/staff?storeId[]=store-2&task=task-7", "/admin/login"],
+  ["/staff?storeId=store-2&task[]=task-7", "/admin/login"],
+  ["/staff?storeId=store-2&task=%5Btask-7%5D", "/admin/login"],
+] as const)("recovers Admin login with only safe scalar push context from %s", async (callback, link) => {
+  sessionRole = "ADMIN";
+  await render("staff", callback); await submit();
+  expect(signOut).toHaveBeenCalledExactlyOnceWith({ redirect: false });
+  expect(container.querySelector("a")?.getAttribute("href")).toBe(link);
+  expect(container.querySelector("a")?.textContent).toBe("Đăng nhập quản trị");
+  expect(window.location.pathname).toBe("/staff/login");
+});
 it("keeps invalid credentials generic without reading a session", async () => {
   signIn.mockResolvedValue({ ok: false, status: 401, error: "CredentialsSignin", url: null });
   await render("staff"); await submit();

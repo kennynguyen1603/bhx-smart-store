@@ -1676,6 +1676,38 @@ for (const [email, path] of [["staff@demo.bhx", "/staff"], ["manager@demo.bhx", 
   });
 }
 
+test("task push signed-out Admin recovers from Staff login and selects the original task without mutation", async ({ page }) => {
+  await authenticateStaffApp(page, "admin@demo.bhx");
+  const feed = await page.request.get("/api/admin/overview"); expect(feed.ok()).toBe(true);
+  const data = await feed.json(); const target = data.tasks[0]; expect(target).toBeDefined();
+  await page.context().clearCookies();
+  const writes: string[] = [];
+  page.on("request", request => {
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method()) && /\/api\/(staff\/tasks|admin\/tasks)(\/|$)/.test(new URL(request.url()).pathname)) writes.push(request.url());
+  });
+  const staffDestination = `/staff?storeId=${data.selectedStoreId}&task=${target.id}`;
+  const adminDestination = `/admin?storeId=${data.selectedStoreId}&task=${target.id}`;
+  await page.goto(staffDestination);
+  await expect(page).toHaveURL(url => url.pathname === "/staff/login" && url.searchParams.get("callbackUrl") === staffDestination);
+  const signIn = async () => {
+    await page.getByLabel("Email", { exact: true }).fill("admin@demo.bhx");
+    await page.getByLabel("Mật khẩu", { exact: true }).fill("Demo@123");
+    await page.getByRole("button", { name: "Đăng nhập", exact: true }).click();
+  };
+  await signIn();
+  const recovery = page.getByRole("link", { name: "Đăng nhập quản trị", exact: true });
+  await expect(recovery).toHaveAttribute("href", `/admin/login?callbackUrl=${encodeURIComponent(adminDestination)}`);
+  expect((await (await page.request.get("/api/auth/session")).json()).user).toBeUndefined();
+  await recovery.click();
+  await expect(page.getByLabel("Email", { exact: true })).toHaveValue("");
+  await signIn();
+  await expect(page).toHaveURL(url => url.pathname + url.search === adminDestination);
+  await expect(page.locator(".store-selector select")).toHaveValue(data.selectedStoreId);
+  await expect(page.locator('tr[aria-current="true"] details[open]')).toContainText(target.title);
+  await expect(page.getByRole("button", { name: "Bắt đầu", exact: true })).toHaveCount(0);
+  expect(writes).toEqual([]);
+});
+
 test("task push deep link survives signed-out login and remains Manager read-only", async ({ page }) => {
   await authenticateStaffApp(page, "manager@demo.bhx");
   const feed = await page.request.get("/api/staff/tasks"); expect(feed.ok()).toBe(true);

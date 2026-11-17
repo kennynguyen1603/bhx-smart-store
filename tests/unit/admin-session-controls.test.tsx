@@ -24,7 +24,7 @@ it.each(["ADMIN", "MANAGER"] as const)("%s can sign out once to Admin login from
   for (const surface of [".user-card", ".workspace-header"]) {
     const control = host.querySelector<HTMLButtonElement>(`${surface} button[aria-label="Đăng xuất"]`);
     expect(control, `${surface} named logout`).not.toBeNull();
-    if (surface === ".user-card") expect(control!.textContent).toContain("Đăng xuất");
+    expect(control!.textContent).toContain("Đăng xuất");
     vi.mocked(signOut).mockClear();
     await act(async () => control!.click());
     expect(signOut).toHaveBeenCalledExactlyOnceWith({ callbackUrl: "/admin/login" });

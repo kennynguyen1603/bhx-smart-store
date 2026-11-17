@@ -352,4 +352,5 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .admin-shell .user-card .admin-logout { display: flex; flex: 0 0 100%; align-items: center; justify-content: center; gap: 8px; min-height: var(--touch-target); font-size: var(--font-body); }
 @media(max-width:760px) {
   .admin-shell .header-actions { max-width: 100%; }
+  .admin-shell .header-actions .mobile-logout { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; width: auto; min-width: var(--touch-target); min-height: var(--touch-target); padding: 0 12px; font-size: var(--font-control); white-space: nowrap; }
 }

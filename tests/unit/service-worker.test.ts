@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { LoginRoleChoice } from "@/components/login-role-choice";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureServiceWorkerRegistration, isLocalServiceWorkerHost } from "@/lib/service-worker";
 
@@ -105,7 +108,7 @@ function loadWorker(hostname: string, windows: unknown[] = []) {
   const cache = { addAll: vi.fn().mockResolvedValue(undefined) };
   const caches = {
     open: vi.fn().mockResolvedValue(cache),
-    keys: vi.fn().mockResolvedValue(["bhx-smart-store-v1", "bhx-smart-store-v2", "other-app"]),
+    keys: vi.fn().mockResolvedValue(["bhx-smart-store-v1", "bhx-smart-store-v2", "bhx-smart-store-v3", "other-app"]),
     delete: vi.fn().mockResolvedValue(true),
   };
   const self = {
@@ -119,6 +122,62 @@ function loadWorker(hostname: string, windows: unknown[] = []) {
 }
 
 describe("worker caching", () => {
+  it("upgrades production caches, evicts credential-bearing v2 HTML and obsolete scripts, and serves clean public login offline", async () => {
+    const origin = "https://store.example";
+    const legacyScript = "/_next/static/chunks/obsolete-login.js";
+    const credentials = ["staff@demo.bhx", "manager@demo.bhx", "admin@demo.bhx", "Demo@123"];
+    const stores = new Map<string, Map<string, Response>>([
+      ["bhx-smart-store-v2", new Map([
+        [`${origin}/login`, new Response(`<html>${credentials.join(" ")}<script src="${legacyScript}"></script></html>`)],
+        [`${origin}${legacyScript}`, new Response(`window.accounts = ${JSON.stringify(credentials)}`)],
+      ])],
+      ["other-app", new Map()],
+    ]);
+    const key = (request: string | { url: string }) => new URL(typeof request === "string" ? request : request.url, origin).href;
+    let online = true;
+    const cleanLogin = renderToStaticMarkup(createElement(LoginRoleChoice));
+    const network = async (request: string | { url: string }) => {
+      if (!online) throw new Error("offline");
+      return new Response(key(request) === `${origin}/login` ? cleanLogin : "clean app shell");
+    };
+    const caches = {
+      keys: async () => [...stores.keys()],
+      delete: async (name: string) => stores.delete(name),
+      match: async (request: string | { url: string }) => {
+        for (const store of stores.values()) { const response = store.get(key(request)); if (response) return response.clone(); }
+      },
+      open: async (name: string) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        const store = stores.get(name)!;
+        return {
+          addAll: async (requests: string[]) => { for (const request of requests) store.set(key(request), await network(request)); },
+          put: async (request: string | { url: string }, response: Response) => { store.set(key(request), response); },
+        };
+      },
+    };
+    type WorkerEvent = { waitUntil?: (promise: Promise<unknown>) => void; respondWith?: (promise: Promise<Response>) => void; request?: unknown };
+    const listeners: Record<string, (event: WorkerEvent) => void> = {};
+    const self = { location: { hostname: "store.example", origin }, addEventListener: (name: string, listener: typeof listeners[string]) => { listeners[name] = listener; }, skipWaiting: async () => {}, clients: { claim: async () => {} } };
+    runInNewContext(readFileSync(new URL("../../public/sw.js", import.meta.url), "utf8"), { self, caches, URL, fetch: network });
+    for (const lifecycle of ["install", "activate"]) {
+      let pending!: Promise<unknown>;
+      listeners[lifecycle]({ waitUntil: promise => { pending = promise; } }); await pending;
+    }
+    expect([...stores.keys()]).toEqual(["other-app", "bhx-smart-store-v3"]);
+    expect(await caches.match(legacyScript)).toBeUndefined();
+    online = false;
+    let response!: Promise<Response>;
+    listeners.fetch({ request: { method: "GET", mode: "navigate", url: `${origin}/login` }, respondWith: promise => { response = promise; } });
+    const html = await (await response).text();
+    expect(html).toContain("Tôi là quản trị");
+    expect(html).toContain("/staff/login");
+    for (const credential of credentials) expect(html).not.toContain(credential);
+    for (const store of stores.values()) for (const cached of store.values()) {
+      const body = await cached.clone().text();
+      for (const credential of credentials) expect(body).not.toContain(credential);
+    }
+  });
+
   it.each(hosts.filter(([, local]) => local))("does not populate or intercept caches on %s", async (host) => {
     const worker = loadWorker(host);
     let pending!: Promise<unknown>;
@@ -132,7 +191,7 @@ describe("worker caching", () => {
     expect(Object.keys(worker.listeners)).toEqual(expect.arrayContaining(["push", "notificationclick", "sync"]));
   });
 
-  it.each([["localhost", ["bhx-smart-store-v1", "bhx-smart-store-v2"]], ["store.example", ["bhx-smart-store-v1"]]])("cleans only obsolete BHX caches on %s", async (host, deleted) => {
+  it.each([["localhost", ["bhx-smart-store-v1", "bhx-smart-store-v2", "bhx-smart-store-v3"]], ["store.example", ["bhx-smart-store-v1", "bhx-smart-store-v2"]]])("cleans only obsolete BHX caches on %s", async (host, deleted) => {
     const worker = loadWorker(host as string);
     let pending!: Promise<unknown>;
     worker.listeners.activate({ waitUntil: (promise) => { pending = promise; } });
@@ -146,7 +205,7 @@ describe("worker caching", () => {
     let pending!: Promise<unknown>;
     worker.listeners.install({ waitUntil: (promise) => { pending = promise; } });
     await pending;
-    expect(worker.caches.open).toHaveBeenCalledWith("bhx-smart-store-v2");
+    expect(worker.caches.open).toHaveBeenCalledWith("bhx-smart-store-v3");
     expect(worker.cache.addAll).toHaveBeenCalledWith(["/", "/login", "/staff", "/kiosk", "/manifest.webmanifest", "/icon.svg"]);
     // Keep the network pending: this test checks interception, without exercising a browser fetch.
     const respondWith = vi.fn();

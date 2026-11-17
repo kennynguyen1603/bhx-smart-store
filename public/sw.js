@@ -1,4 +1,4 @@
-const CACHE = "bhx-smart-store-v2";
+const CACHE = "bhx-smart-store-v3";
 const IS_LOCAL_HOST = self.location.hostname === "localhost" || self.location.hostname.endsWith(".localhost") ||
   self.location.hostname === "127.0.0.1" || self.location.hostname === "::1" || self.location.hostname === "[::1]";
 const APP_SHELL = ["/", "/login", "/staff", "/kiosk", "/manifest.webmanifest", "/icon.svg"];
