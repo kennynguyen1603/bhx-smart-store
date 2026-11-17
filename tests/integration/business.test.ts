@@ -420,6 +420,84 @@ describe("FEFO engine", () => {
     expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(true);
   });
 
+  // Catches cancellation overwriting the LED of a concurrently committed sibling task.
+  it("keeps the ESL on when a sibling is created concurrently with superseded cancellation", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
+    const { task } = await createFefoFixture("2026-11-20", 20);
+    let creatorReady!: () => void;
+    let allowCreatorCommit!: () => void;
+    let cancellationStarted!: (pid: number) => void;
+    const creatorHasLedLock = new Promise<void>((resolve) => { creatorReady = resolve; });
+    const creatorCanCommit = new Promise<void>((resolve) => { allowCreatorCommit = resolve; });
+    const cancellationPid = new Promise<number>((resolve) => { cancellationStarted = resolve; });
+    let siblingRead = false;
+    let transactions = 0;
+    let creation!: Promise<PromiseSettledResult<Awaited<ReturnType<typeof processSaleEvent>>>[]>;
+    const runTransaction = prisma.$transaction.bind(prisma);
+    const transaction = vi.spyOn(prisma, "$transaction").mockImplementation((async (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+      const creatingSibling = transactions++ === 0;
+      return runTransaction(async (tx) => {
+        if (creatingSibling) {
+          const eslDelegate = new Proxy(tx.eSL, {
+            get(target, property) {
+              if (property !== "updateMany") return Reflect.get(target, property);
+              return async (args: Prisma.ESLUpdateManyArgs) => {
+                const result = await tx.eSL.updateMany(args);
+                creatorReady();
+                await creatorCanCommit;
+                return result;
+              };
+            },
+          });
+          return callback(new Proxy(tx, { get(target, property) { return property === "eSL" ? eslDelegate : Reflect.get(target, property); } }));
+        }
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        cancellationStarted(pid);
+        const taskDelegate = new Proxy(tx.task, {
+          get(target, property) {
+            if (property !== "findFirst") return Reflect.get(target, property);
+            return async (args: Prisma.TaskFindFirstArgs) => {
+              const snapshot = await tx.task.findFirst(args);
+              siblingRead = true;
+              // Without an ESL lock, preserve the stale no-sibling snapshot until creation commits.
+              await creation;
+              return snapshot;
+            };
+          },
+        });
+        return callback(new Proxy(tx, { get(target, property) { return property === "task" ? taskDelegate : Reflect.get(target, property); } }));
+      }, { timeout: 15_000 });
+    }) as typeof prisma.$transaction);
+    let cancellation: Promise<PromiseSettledResult<object>[]> | undefined;
+    try {
+      creation = Promise.allSettled([processSaleEvent({ externalEventId: `${EVENT_PREFIX}${randomUUID()}`, storeCode: STORE_CODE, productSku: PRODUCT_SKU, shelfCode: "T-01", quantity: 4, priceVnd: 10_000, occurredAt: new Date() })]);
+      await creatorHasLedLock;
+      cancellation = Promise.allSettled([completeFefoTask(task.id, { id: fixture.userId, role: Role.ADMIN, storeIds: [] }, randomUUID())]);
+      const pid = await cancellationPid;
+      const deadline = performance.now() + 10_000;
+      while (!siblingRead) {
+        // Release creation only once cancellation either holds a stale snapshot or waits on its ESL lock.
+        const [{ blocked }] = await prisma.$queryRaw<{ blocked: boolean }[]>`SELECT cardinality(pg_blocking_pids(${pid}::int)) > 0 AS blocked`;
+        if (blocked) break;
+        if (performance.now() >= deadline) throw new Error("Cancellation neither read siblings nor waited for the ESL lock");
+      }
+      allowCreatorCommit();
+      const [created] = await creation;
+      const [cancelled] = await cancellation;
+      expect(created.status).toBe("fulfilled");
+      expect(cancelled.status).toBe("fulfilled");
+      if (cancelled.status === "fulfilled") expect(cancelled.value).toMatchObject({ resolution: "ALREADY_APPLIED", task: { id: task.id, status: "CANCELLED" } });
+      expect(await prisma.task.findMany({ where: { storeId: fixture.storeId, productId: fixture.productId, shelfId: fixture.shelfId, type: TaskType.RESTOCK } })).toMatchObject([{ status: "OPEN" }]);
+      expect((await prisma.eSL.findUniqueOrThrow({ where: { code: "ESL-TST-01" } })).ledOn).toBe(true);
+    } finally {
+      allowCreatorCommit();
+      await creation;
+      await cancellation;
+      transaction.mockRestore();
+    }
+  });
+
   it("replaces 20% with the store-day 30% price and appends one historical markdown on retry", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));

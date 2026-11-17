@@ -354,6 +354,8 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
       }
       const updatedTask = await tx.task.findUniqueOrThrow({ where: { id: task.id } });
       await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: "CANCELLED", note } });
+      // Serialize this read/write with task creators that turn the same ESL on.
+      await tx.$queryRaw`SELECT id FROM "ESL" WHERE "storeId" = ${task.storeId} AND "productId" = ${task.productId} AND "shelfId" = ${task.shelfId} FOR UPDATE`;
       const activeSibling = await tx.task.findFirst({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId, status: { in: ACTIVE_TASKS } }, select: { id: true } });
       await tx.eSL.updateMany({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId }, data: { ledOn: activeSibling !== null } });
       await tx.auditLog.create({ data: { actorId: user.id, storeId: task.storeId, action: "FEFO_TASK_SUPERSEDED", entityType: "Task", entityId: task.id, before: json({ status: task.status, assigneeId: task.assigneeId, note: task.note }), after: json({ status: updatedTask.status, assigneeId: updatedTask.assigneeId, note }) } });
