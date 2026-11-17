@@ -138,3 +138,56 @@ test("Admin task assignment reaches Staff and authorized Manager without cross-s
     await prisma.store.delete({ where: { id: foreign.id } }); await prisma.user.delete({ where: { id: foreignStaff.id } });
   }
 });
+
+for (const width of [320, 390, 760, 1280]) {
+  for (const role of ["admin", "manager"]) {
+    test(`Admin session controls keep reachable targets and clear the ${role} session at ${width}px`, async ({ page }, testInfo) => {
+      const { referenceOverview } = await import("../fixtures/admin-reference");
+      await page.setViewportSize({ width, height: 844 });
+      await page.route("**/api/admin/overview**", route => route.fulfill({ json: referenceOverview }));
+      await login(page, `${role}@demo.bhx`);
+      await expect(page.locator(".workspace-header h1")).toHaveText("Tổng quan");
+      const logout = page.getByRole("button", { name: "Đăng xuất", exact: true }).filter({ visible: true });
+      await expect(logout).toHaveCount(1); await expect(logout).toBeVisible();
+      if (width > 760) await expect(logout).toHaveText("Đăng xuất");
+      await expectMobileTarget(logout);
+      const targets = [logout, page.locator(".notification-button"), page.getByRole("button", { name: "Tải lại dữ liệu", exact: true })];
+      const boxes = [];
+      for (const target of targets) {
+        await expect(target).toBeEnabled();
+        const box = await target.boundingBox(); expect(box).not.toBeNull(); boxes.push(box!);
+        expect(await target.evaluate(el => {
+          const b = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2));
+        })).toBe(true);
+      }
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i], b = boxes[j];
+        expect(a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y).toBe(false);
+      }
+      const viewport = await page.evaluate(() => ({ body: document.body.scrollWidth, document: document.documentElement.scrollWidth, viewport: innerWidth }));
+      expect(viewport.body).toBeLessThanOrEqual(width); expect(viewport.document).toBeLessThanOrEqual(width);
+      await testInfo.attach("header measurements", { body: JSON.stringify({ width, role, boxes, viewport }), contentType: "application/json" });
+      await page.screenshot({ path: `/tmp/auth-task2-${role}-${width}.png`, fullPage: true });
+      let signouts = 0; page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/auth/signout") signouts++; });
+      await logout.click(); await expect(page).toHaveURL(url => url.pathname === "/admin/login");
+      expect(signouts).toBe(1); expect((await (await page.request.get("/api/auth/session")).json()).user).toBeUndefined();
+      await page.goto("/admin"); await expect(page).toHaveURL(url => url.pathname === "/admin/login");
+    });
+  }
+}
+for (const width of [320, 390, 760]) {
+  test(`LED explanation remains visible and associated at ${width}px`, async ({ page }) => {
+    const { referenceOverview } = await import("../fixtures/admin-reference");
+    await page.setViewportSize({ width, height: 844 });
+    await page.route("**/api/admin/overview**", route => route.fulfill({ json: referenceOverview }));
+    await login(page, "admin@demo.bhx");
+    await page.getByRole("button", { name: "Sơ đồ & ESL", exact: true }).click();
+    await page.getByRole("button", { name: "Sửa ESL ESL-TWO", exact: true }).click();
+    const toggle = page.getByRole("checkbox", { name: "Bật đèn LED", exact: true });
+    const copy = "Đèn LED trên nhãn kệ sáng khi tồn kho chạm ngưỡng cảnh báo, tắt sau khi bổ sung.";
+    await expect(toggle).toHaveAccessibleDescription(copy);
+    await expect(page.getByText(copy, { exact: true })).toBeVisible();
+    expect(await page.getByRole("dialog").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path: `/tmp/auth-task2-led-${width}.png`, fullPage: true });
+  });
+}

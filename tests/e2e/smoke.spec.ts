@@ -899,8 +899,11 @@ for (const [role, account] of [["Staff", "staff@demo.bhx"], ["Manager", "manager
     const logout = page.getByRole("button", { name: "Đăng xuất" });
     await expect(logout).toBeVisible();
     await expect(logout).toBeEnabled();
+    let signouts = 0; page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/auth/signout") signouts++; });
     await logout.click();
-    await expect(page).toHaveURL((url) => url.pathname === "/");
+    await expect(page).toHaveURL((url) => url.pathname === "/staff/login"); expect(signouts).toBe(1);
+    expect((await (await page.request.get("/api/auth/session")).json()).user).toBeUndefined();
+    await page.goto("/staff"); await expect(page).toHaveURL(url => url.pathname === "/staff/login");
   });
 }
 
@@ -1791,3 +1794,14 @@ test("role login invalid credentials stay generic", async ({ page }) => {
   await expect(page.locator(".login-card").getByRole("alert")).toHaveText("Email hoặc mật khẩu không đúng.");
   await expect(page).toHaveURL(url => url.pathname === "/staff/login");
 });
+
+for (const role of ["staff", "manager"]) {
+  test(`mobile staff navbar desktop counterpart signs ${role} out to Staff login`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await authenticateStaffApp(page, `${role}@demo.bhx`);
+    let signouts = 0; page.on("request", request => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/auth/signout") signouts++; });
+    await page.getByRole("button", { name: "Đăng xuất", exact: true }).filter({ visible: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === "/staff/login"); expect(signouts).toBe(1);
+    expect((await (await page.request.get("/api/auth/session")).json()).user).toBeUndefined();
+  });
+}

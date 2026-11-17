@@ -318,3 +318,11 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .login-card .input-wrap{min-width:0}
 .login-card .input-wrap input{min-width:0}
 .login-card .input-wrap button{min-width:44px;min-height:44px}
+
+/* Named Admin session control keeps the user card readable beside long names. */
+.admin-shell .user-card { flex-wrap: wrap; }
+.admin-shell .user-card > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.admin-shell .user-card .admin-logout { display: flex; flex: 0 0 100%; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-size: 14px; }
+@media(max-width:760px) {
+  .admin-shell .header-actions { max-width: 100%; }
+}

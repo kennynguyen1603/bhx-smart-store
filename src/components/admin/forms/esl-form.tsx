@@ -9,6 +9,6 @@ export function EslForm({ descriptor, stores, shelves, products, ...props }: Cor
   return <CoreForm<z.input<Schema>, z.output<Schema>> {...props} schema={edit ? eslEditSchema : eslCreateSchema} defaultValues={{ code: "", shelfId: "", productId: "", ...descriptor.defaultValues }} title={edit ? "Sửa ESL" : "Gắn ESL"} description="Chọn kệ và sản phẩm gắn với thiết bị ESL.">
     <ReferenceReadOnly label="Cửa hàng" options={stores} value={edit ? descriptor.readOnlyValues?.storeId ?? "" : descriptor.defaultValues.storeId ?? ""} />
     {edit ? <CoreReadOnly label="Mã ESL" value={descriptor.readOnlyValues?.code ?? ""} /> : <CoreInput name="code" label="Mã ESL" />}
-    <ReferenceSelect name="shelfId" label="Kệ" options={shelves} /><ReferenceSelect name="productId" label="Sản phẩm" options={products} />{edit && <ReferenceToggle name="ledOn" label="Bật đèn LED" />}
+    <ReferenceSelect name="shelfId" label="Kệ" options={shelves} /><ReferenceSelect name="productId" label="Sản phẩm" options={products} />{edit && <ReferenceToggle name="ledOn" label="Bật đèn LED" description="Đèn LED trên nhãn kệ sáng khi tồn kho chạm ngưỡng cảnh báo, tắt sau khi bổ sung." />}
   </CoreForm>;
 }

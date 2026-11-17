@@ -208,3 +208,16 @@ it("edits FEFO day/discount/quarantine/active values", async () => {
   await act(async () => { field("Cách ly").click(); field("Đang hoạt động").click(); }); await submit();
   expect(writes[0].body).toEqual({ daysRemaining: 7, discountPercent: 45, quarantine: false, active: true });
 });
+
+it("associates persistent LED meaning with the ESL toggle for touch and screen readers", async () => {
+  await openEdit(edits[3]);
+  const toggle = field("Bật đèn LED");
+  const descriptions = (toggle.getAttribute("aria-describedby") || "").split(/\s+/).map(id => document.getElementById(id)).filter(Boolean);
+  expect(descriptions.map(el => el!.textContent).join(" ")).toContain("Đèn LED trên nhãn kệ sáng khi tồn kho chạm ngưỡng cảnh báo, tắt sau khi bổ sung.");
+  const help = descriptions.find(el => el!.textContent?.startsWith("Đèn LED"))!;
+  expect(help.hidden).toBe(false); expect(help.getAttribute("aria-hidden")).not.toBe("true");
+  expect(help.closest('[role="tooltip"]')).toBeNull();
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  await act(async () => toggle.click()); await submit();
+  expect(writes[0].body).toEqual({ shelfId: shelf.id, productId: "product-second", ledOn: false });
+});

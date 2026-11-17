@@ -1,6 +1,6 @@
 "use client";
 import { useFormContext } from "react-hook-form";
-import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CoreInput } from "./core-form";
@@ -16,9 +16,9 @@ export function ReferenceSelect({ name, label, options, optional = false, emptyL
     </Select><FormMessage /></FormItem>;
   }} />;
 }
-export function ReferenceToggle({ name, label }: { name: string; label: string }) {
+export function ReferenceToggle({ name, label, description }: { name: string; label: string; description?: string }) {
   const { control } = useFormContext();
-  return <FormField control={control} name={name} render={({ field }) => <FormItem><FormLabel>{label}</FormLabel><FormControl><Checkbox checked={!!field.value} onCheckedChange={field.onChange} ref={field.ref} onBlur={field.onBlur} /></FormControl><FormMessage /></FormItem>} />;
+  return <FormField control={control} name={name} render={({ field }) => <FormItem><FormLabel>{label}</FormLabel><FormControl><Checkbox checked={!!field.value} onCheckedChange={field.onChange} ref={field.ref} onBlur={field.onBlur} /></FormControl>{description && <FormDescription>{description}</FormDescription>}<FormMessage /></FormItem>} />;
 }
 export function GeometryFields() {
   return <><CoreInput name="x" label="Vị trí X" numeric /><CoreInput name="y" label="Vị trí Y" numeric /><CoreInput name="width" label="Chiều rộng" numeric /><CoreInput name="height" label="Chiều cao" numeric /></>;
