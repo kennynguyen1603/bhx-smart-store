@@ -408,6 +408,28 @@ describe("FEFO engine", () => {
     expect(outcomePush.send).not.toHaveBeenCalled();
   });
 
+  it("records zero percent when closing an undiscounted lot under a zero-percent rule", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T18:00:00Z"));
+    const { lot, task } = await createFefoFixture("2026-11-20");
+    const rule = await prisma.fefoRule.findFirstOrThrow({ where: { storeId: fixture.storeId, daysRemaining: 3 } });
+    await prisma.fefoRule.update({ where: { id: rule.id }, data: { discountPercent: 0 } });
+    try {
+      const user = { id: fixture.userId, role: Role.ADMIN, storeIds: [] };
+      const clientMutationId = randomUUID();
+      const result = await completeFefoTask(task.id, user, clientMutationId);
+      const note = "Không cần xử lý: lô đã giảm 0%, bằng hoặc cao hơn quy tắc 0%.";
+      expect(result).toMatchObject({ resolution: "ALREADY_APPLIED", task: { id: task.id, status: "CANCELLED", note } });
+      expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ status: "CANCELLED", note });
+      expect(await prisma.taskEvent.findMany({ where: { taskId: task.id } })).toMatchObject([{ type: "CANCELLED", note }]);
+      expect(await prisma.lot.findUniqueOrThrow({ where: { id: lot.id } })).toEqual(lot);
+      expect(await prisma.markdown.count({ where: { lotId: lot.id } })).toBe(0);
+      await expect(completeFefoTask(task.id, user, clientMutationId)).resolves.toEqual(result);
+    } finally {
+      await prisma.fefoRule.update({ where: { id: rule.id }, data: { discountPercent: rule.discountPercent } });
+    }
+  });
+
   // Catches clearing an ESL that still represents actionable work on the same shelf/product.
   it("keeps the ESL on when cancelling a superseded task with an active sibling", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });

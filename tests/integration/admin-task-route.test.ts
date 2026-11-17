@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { Session } from "next-auth";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
+import { completeFefoTask } from "@/lib/business";
+import { Prisma, Role } from "@/generated/prisma/client";
 
 const auth = vi.hoisted(() => ({ session: null as Session | null }));
 const delivery = vi.hoisted(() => ({ send: vi.fn() }));
@@ -21,6 +23,7 @@ async function unchanged() {
   expect(await prisma.task.count({ where: { storeId } })).toBe(0);
   expect(await prisma.notification.count({ where: { storeId } })).toBe(0);
   expect(delivery.send).not.toHaveBeenCalled();
+  expect((await prisma.eSL.findUniqueOrThrow({ where: { code: `AT-ESL-${run}` } })).ledOn).toBe(false);
 }
 beforeAll(async () => {
   const stores = await Promise.all(["home", "foreign"].map((code) => prisma.store.create({ data: { code: `AT-${code}-${run}`, name: code, address: "Test" } })));
@@ -31,17 +34,20 @@ beforeAll(async () => {
   [shelfId, foreignShelfId] = shelves.map((s) => s.id);
   supplierId = (await prisma.supplier.create({ data: { code: `AT-${run}`, name: "Test", country: "VN" } })).id;
   await prisma.inventory.create({ data: { storeId, productId, shelfId, onShelf: 2, backroom: 8, capacity: 10, lowThreshold: 3 } });
+  await prisma.eSL.create({ data: { code: `AT-ESL-${run}`, storeId, productId, shelfId } });
   users = await Promise.all((["ADMIN", "MANAGER", "STAFF", "STAFF", "STAFF", "STAFF"] as const).map((role, index) => prisma.user.create({ data: { email: `AT-${index}-${run}@test.local`, name: `User ${index}`, passwordHash: "unused", role, active: index !== 4, userStores: { create: { storeId: index === 5 ? foreignStoreId : storeId } } } })));
 });
 beforeEach(async () => {
   await prisma.notification.deleteMany({ where: { storeId } });
   await prisma.task.deleteMany({ where: { storeId } });
   await prisma.lot.deleteMany({ where: { storeId: { in: [storeId, foreignStoreId] } } });
+  await prisma.eSL.update({ where: { code: `AT-ESL-${run}` }, data: { ledOn: false } });
   auth.session = { expires: "2099-01-01", user: { id: users[0].id, role: "ADMIN", storeIds: [], defaultStoreId: storeId } };
   delivery.send.mockReset().mockResolvedValue({ sent: 0, skipped: true });
 });
 afterAll(async () => {
   if (!storeId) return;
+  await prisma.auditLog.deleteMany({ where: { storeId } });
   await prisma.store.deleteMany({ where: { id: { in: [storeId, foreignStoreId] } } });
   await prisma.product.deleteMany({ where: { id: { in: [productId, otherProductId] } } });
   await prisma.supplier.delete({ where: { id: supplierId } });
@@ -54,11 +60,79 @@ describe("Admin task command", () => {
     const response = await post({ assigneeId: users[2].id, note: "Test note", dueAt: "2030-01-02T10:00:00+07:00" });
     expect(response.status).toBe(201);
     const { task } = await response.json();
+    expect((await prisma.eSL.findUniqueOrThrow({ where: { code: `AT-ESL-${run}` } })).ledOn).toBe(true);
     expect(task).toMatchObject({ status: "OPEN", type: "RESTOCK", priority: "HIGH", lotId: null, note: "Test note", dueAt: "2030-01-02T03:00:00.000Z", product: { name: "main" }, shelf: { label: "Kệ test" }, assignee: { name: "User 2" } });
     expect(await prisma.taskEvent.findMany({ where: { taskId: task.id } })).toMatchObject([{ type: "CREATED", actorId: auth.session!.user.id }]);
     expect((await prisma.notification.findMany({ where: { taskId: task.id } })).map((n) => n.userId)).toEqual([users[2].id]);
     expect(delivery.send).toHaveBeenCalledWith([users[2].id], expect.objectContaining({ url: `/staff?storeId=${storeId}&task=${task.id}`, tag: task.id }));
   });
+  it("keeps the ESL on when manual task creation races with superseded cancellation", async () => {
+    const markedLot = await lot({ status: "MARKED_DOWN", markdownPercent: 20, markdownPriceVnd: 800 });
+    await prisma.fefoRule.create({ data: { storeId, daysRemaining: 10_000, discountPercent: 20 } });
+    const obsoleteTask = await prisma.task.create({ data: { storeId, productId, shelfId, lotId: markedLot.id, type: "FEFO", title: "Obsolete FEFO" } });
+    let snapshotReady!: () => void;
+    let releaseCancellation!: () => void;
+    let creationStarted!: (pid: number) => void;
+    const siblingSnapshot = new Promise<void>((resolve) => { snapshotReady = resolve; });
+    const cancellationCanWrite = new Promise<void>((resolve) => { releaseCancellation = resolve; });
+    const creationPid = new Promise<number>((resolve) => { creationStarted = resolve; });
+    let creationDone = false;
+    let transactions = 0;
+    const runTransaction = prisma.$transaction.bind(prisma);
+    const transaction = vi.spyOn(prisma, "$transaction").mockImplementation((async (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+      const cancelling = transactions++ === 0;
+      return runTransaction(async (tx) => {
+        if (!cancelling) {
+          const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          creationStarted(pid);
+          return callback(tx);
+        }
+        const taskDelegate = new Proxy(tx.task, {
+          get(target, property) {
+            if (property !== "findFirst") return Reflect.get(target, property);
+            return async (args: Prisma.TaskFindFirstArgs) => {
+              const snapshot = await tx.task.findFirst(args);
+              snapshotReady();
+              await cancellationCanWrite;
+              return snapshot;
+            };
+          },
+        });
+        return callback(new Proxy(tx, { get(target, property) { return property === "task" ? taskDelegate : Reflect.get(target, property); } }));
+      }, { timeout: 15_000 });
+    }) as typeof prisma.$transaction);
+    const cancellation = Promise.allSettled([completeFefoTask(obsoleteTask.id, { id: users[0].id, role: Role.ADMIN, storeIds: [] }, randomUUID())]);
+    let creation: Promise<PromiseSettledResult<Response>[]> | undefined;
+    try {
+      await siblingSnapshot;
+      // Cancellation holds the ESL lock and has read no active siblings.
+      creation = Promise.allSettled([post()]).then((results) => { creationDone = true; return results; });
+      const pid = await creationPid;
+      const deadline = performance.now() + 10_000;
+      while (!creationDone) {
+        const [{ blocked }] = await prisma.$queryRaw<{ blocked: boolean }[]>`SELECT cardinality(pg_blocking_pids(${pid}::int)) > 0 AS blocked`;
+        if (blocked) break;
+        if (performance.now() >= deadline) throw new Error("Manual creation neither committed nor waited for the ESL lock");
+      }
+      releaseCancellation();
+      const [cancelled] = await cancellation;
+      const [created] = await creation;
+      expect(cancelled.status).toBe("fulfilled");
+      if (cancelled.status === "fulfilled") expect(cancelled.value).toMatchObject({ resolution: "ALREADY_APPLIED", task: { id: obsoleteTask.id, status: "CANCELLED" } });
+      expect(created.status).toBe("fulfilled");
+      if (created.status !== "fulfilled") throw created.reason;
+      expect(created.value.status).toBe(201);
+      const { task } = await created.value.json();
+      expect(await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).toMatchObject({ type: "RESTOCK", status: "OPEN" });
+      expect((await prisma.eSL.findUniqueOrThrow({ where: { code: `AT-ESL-${run}` } })).ledOn).toBe(true);
+    } finally {
+      releaseCancellation();
+      await cancellation;
+      await creation;
+      transaction.mockRestore();
+    }
+  });
+
   it.each(["STAFF", "foreign Manager", "anonymous"])("rejects %s without side effects", async (kind) => {
     if (kind === "anonymous") auth.session = null;
     else auth.session!.user = { id: users[2].id, role: kind === "STAFF" ? "STAFF" : "MANAGER", storeIds: kind === "STAFF" ? [storeId] : [foreignStoreId], defaultStoreId: null };

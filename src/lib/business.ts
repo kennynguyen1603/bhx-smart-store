@@ -337,8 +337,9 @@ export async function completeFefoTask(taskId: string, user: { id: string; role:
       if ((currentLot.status !== LotStatus.AVAILABLE && currentLot.status !== LotStatus.MARKED_DOWN) || currentLot.quantity <= 0) {
         throw new ApiError(409, "Lô không còn đủ điều kiện bán để giảm giá", "LOT_NOT_SELLABLE");
       }
-      if ((currentLot.markdownPercent ?? 0) < discountPercent) return null;
-      const note = `Không cần xử lý: lô đã giảm ${currentLot.markdownPercent}%, bằng hoặc cao hơn quy tắc ${discountPercent}%.`;
+      const markdownPercent = currentLot.markdownPercent ?? 0;
+      if (markdownPercent < discountPercent) return null;
+      const note = `Không cần xử lý: lô đã giảm ${markdownPercent}%, bằng hoặc cao hơn quy tắc ${discountPercent}%.`;
       const cancelled = await tx.task.updateMany({
         where: {
           id: task.id,

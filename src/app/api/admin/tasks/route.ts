@@ -57,6 +57,7 @@ export async function POST(request: Request) {
       });
       await tx.taskEvent.create({ data: { taskId: task.id, actorId: user.id, type: "CREATED", note: input.note } });
       const recipients = await createAssignmentNotifications(tx, task, input.assigneeId);
+      await tx.eSL.updateMany({ where: { storeId: task.storeId, productId: task.productId, shelfId: task.shelfId }, data: { ledOn: true } });
       return { task, recipients };
     });
     await sendPushToUsers(recipients, { title: task.title, body: task.note || "Bạn có một nhiệm vụ mới cần xử lý", url: `/staff?storeId=${task.storeId}&task=${task.id}`, tag: task.id }).catch((error) => console.error("Task push failed", error));
