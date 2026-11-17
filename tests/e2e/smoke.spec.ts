@@ -255,7 +255,7 @@ test("product detail cache ignores a stale search after switching stores", async
 
   await expect(page.getByRole("heading", { name: /Bạn đang tìm/i })).toBeVisible();
   await expect(page.locator(".product-card")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Tìm kiếm" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Xem tất cả sản phẩm" })).toBeEnabled();
 });
 
 test("product detail cache ignores stale openExact search after automatic reset", async ({ page }) => {
