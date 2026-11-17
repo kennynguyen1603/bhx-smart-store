@@ -337,6 +337,9 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .notification-read-one { flex-shrink: 0; margin-left: auto; }
 
 /* Audience-specific authentication entry points. */
+.auth-panel-content{display:grid;gap:16px;width:min(440px,100%)}
+.auth-home-link{justify-self:start}
+.auth-panel-content>.login-card{width:100%}
 .auth-brand{font-size:22px;letter-spacing:-.03em}
 .login-role-choice{display:grid;gap:12px}
 .login-role-choice .button{min-height:48px;white-space:normal;text-align:center;line-height:1.5}

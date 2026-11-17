@@ -42,7 +42,7 @@ it.each([StaffPage, AdminPage])("drops task context outside Manager membership",
 it("renders neutral login as only two audience links with no credential form", async () => {
   const element = await LoginPage({ searchParams: Promise.resolve({ callbackUrl: "/admin?storeId=store-2&task=task-7" }) });
   const container = document.createElement("div"); container.innerHTML = renderToStaticMarkup(element);
-  const links = Array.from(container.querySelectorAll("a"));
+  const links = Array.from(container.querySelectorAll('nav[aria-label="Chọn trang đăng nhập"] a'));
   expect(links.map(a => [a.textContent, a.getAttribute("href")])).toEqual([
     ["Tôi là nhân viên / quản lý", "/staff/login"],
     ["Tôi là quản trị", "/admin/login?callbackUrl=%2Fadmin%3FstoreId%3Dstore-2%26task%3Dtask-7"],
