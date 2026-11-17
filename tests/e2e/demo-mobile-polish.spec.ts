@@ -3,6 +3,7 @@ import { test } from "../fixtures/shelf-restoration";
 import nextEnv from "@next/env";
 import type { AdminMapStore } from "../../src/components/admin/admin-map-editor";
 import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -55,6 +56,9 @@ test("confirmed notification reads survive offline fallback and reload without c
     await page.reload();
     await page.getByRole("button", { name: "Thông báo, 1 chưa đọc", exact: true }).click();
     await expect(page.locator(".notification-row strong")).toHaveText("Displayed notification");
+    await readable(page, [".notification-row strong", ".notification-row p"]);
+    await readable(page, [".notification-row time", ".notification-row-heading span"], 12);
+    await hitTargets(page, ".notification-read-one");
     await page.getByRole("button", { name: "Đánh dấu tất cả đã đọc", exact: true }).click();
     await expect.poll(() => requestIds).toEqual(["displayed-unread"]);
     payload.notifications.push({ ...notification, id: "new-unread", title: "New arrival" });
@@ -301,7 +305,7 @@ for (const role of ["staff", "manager"] as const) {
     await expect(page.locator('.toast.error, [data-sonner-toast][data-type="error"]')).toHaveCount(0);
     await page.keyboard.press("Escape");
     await tap(page, page.locator(".mobile-logout"));
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/staff\/login$/);
     const session = await page.request.get("/api/auth/session");
     expect(await session.json()).toEqual({});
   });
@@ -375,6 +379,40 @@ test("live ESL labels contain QR, assignment, task meaning and unsplit A4 cards"
   } finally { await prisma.$disconnect(); }
 });
 
+test("product barcode print keeps whole labels and physical A4 dimensions", async ({ page }) => {
+  await page.goto("/demo/barcodes");
+  await expect(page.locator(".barcode-card").first()).toBeVisible();
+  const count = await page.locator(".barcode-card").count();
+  await page.emulateMedia({ media: "print" });
+  await page.setViewportSize({ width: 794, height: 1123 });
+  await expect(page.locator(".barcode-toolbar")).toBeHidden();
+  const layout = await page.locator(".barcode-sheet-page").evaluate(element => ({
+    width: element.getBoundingClientRect().width,
+    sheets: [...element.querySelectorAll(".barcode-sheet")].map(sheet => ({
+      columns: getComputedStyle(sheet).gridTemplateColumns.split(" ").length,
+      height: sheet.getBoundingClientRect().height,
+      breakBefore: getComputedStyle(sheet).breakBefore,
+      cards: [...sheet.children].map(card => ({ height: card.getBoundingClientRect().height, breakInside: getComputedStyle(card).breakInside, barcode: card.querySelector("svg")!.getBoundingClientRect().width })),
+    })),
+  }));
+  expect(layout.width).toBeCloseTo(190 * 96 / 25.4, 1);
+  for (const [index, sheet] of layout.sheets.entries()) {
+    expect(sheet.columns).toBe(2); expect(sheet.cards.length).toBeLessThanOrEqual(8);
+    expect(sheet.height).toBeLessThanOrEqual(277 * 96 / 25.4);
+    if (index) expect(sheet.breakBefore).toBe("page");
+    for (const card of sheet.cards) {
+      expect(card.height).toBeCloseTo(64 * 96 / 25.4, 1);
+      expect(card.breakInside).toBe("avoid");
+      expect(card.barcode).toBeCloseTo(60 * 96 / 25.4, 1);
+    }
+  }
+  const pdf = (await page.pdf({ preferCSSPageSize: true, printBackground: true })).toString("latin1");
+  expect([...pdf.matchAll(/\/Type \/Page\b/g)]).toHaveLength(Math.ceil(count / 8));
+  const box = pdf.match(/\/MediaBox\s*\[0 0 ([\d.]+) ([\d.]+)\]/)!;
+  expect(Number(box[1])).toBeCloseTo(210 * 72 / 25.4, 0);
+  expect(Number(box[2])).toBeCloseTo(297 * 72 / 25.4, 0);
+});
+
 async function readable(page: Page, selectors: string[], minimum = 14) {
   for (const selector of selectors) {
     const nodes = page.locator(selector);
@@ -386,22 +424,92 @@ async function readable(page: Page, selectors: string[], minimum = 14) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
 }
 
-for (const width of [320, 390, 768]) {
-  test(`${width}px key screens preserve readable typography, hit boxes and page width`, async ({ page }) => {
+async function hitTargets(page: Page, selector: string) {
+  const nodes = page.locator(selector);
+  expect(await nodes.count(), selector).toBeGreaterThan(0);
+  for (const node of await nodes.all()) if (await node.isVisible()) {
+    const box = await node.boundingBox();
+    expect(box!.width, `${selector} width`).toBeGreaterThanOrEqual(44);
+    expect(box!.height, `${selector} height`).toBeGreaterThanOrEqual(44);
+    await node.click({ trial: true });
+  }
+}
+
+for (const width of [320, 390, 768, 1280]) {
+  test(`${width}px key screens preserve readable typography, hit boxes and page width`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1024 });
+    test.setTimeout(120_000);
+    const capture = async (name: string) => {
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const modalOpen = await page.locator(".modal:visible,.ui-dialog-content:visible").count() > 0;
+      await testInfo.attach(`${width}-${name}`, { body: await page.screenshot({ path: testInfo.outputPath(`${width}-${name}.png`), fullPage: !modalOpen }), contentType: "image/png" });
+      const measurements = await page.locator("body").evaluate(body => ({
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        tokens: Object.fromEntries(["--font-body", "--font-control", "--font-meta", "--font-title-sm", "--touch-target"].map(token => [token, getComputedStyle(document.documentElement).getPropertyValue(token).trim()])),
+        text: [...body.querySelectorAll(".card-copy,.login-card,.task-row,.staff-task-modal,.data-table,.ui-dialog-content,.kiosk-page,.notification-row")].flatMap(root => [...root.querySelectorAll("strong,small,p,label,input,button,th,td,.badge,.nav-label,.eyebrow")]).filter(node => (node as HTMLElement).offsetWidth > 0).map(node => ({ class: node.className, tag: node.tagName, font: getComputedStyle(node).fontSize })),
+        controls: [...body.querySelectorAll(".header-actions button,.filter-row button,.modal-close,.notification-read-one")].filter(node => (node as HTMLElement).offsetWidth > 0).map(node => ({ label: node.getAttribute("aria-label") || node.textContent, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height })),
+        map: [...body.querySelectorAll(".map-shelf strong,.map-facility")].map(node => ({ class: node.className, font: getComputedStyle(node).fontSize })),
+      }));
+      const path = testInfo.outputPath(`${width}-${name}-measurements.json`);
+      await writeFile(path, JSON.stringify(measurements, null, 2));
+      await testInfo.attach(`${width}-${name}-measurements`, { path, contentType: "application/json" });
+    };
     await page.goto("/");
     await expect(page.locator(".experience-card")).toHaveCount(2);
     await readable(page, [".landing-hero p", ".card-copy > span", ".demo-links a"]);
-    await page.goto("/staff/login");
-    await readable(page, [".login-card p", ".login-card input", ".login-card form button"]);
+    await readable(page, [".card-copy small", ".landing-header .logo small"], 12);
+    await capture("landing");
+    for (const path of ["/login", "/staff/login", "/admin/login"]) {
+      await page.goto(path);
+      await readable(page, [".login-card p", ".login-card .button"]);
+      await hitTargets(page, ".login-card .button");
+      if (path !== "/login") { await readable(page, [".login-card input", ".login-card label"]); await hitTargets(page, ".input-wrap button"); }
+      await capture(path.slice(1).replace("/", "-"));
+    }
     await page.goto("/demo/esl-labels");
     await readable(page, [".esl-label-toolbar p", ".esl-label-product", ".esl-label-location", ".esl-label-toolbar button"]);
     await page.goto("/kiosk");
-    await readable(page, [".kiosk-search input", ".kiosk-search button"]);
+    await readable(page, [".kiosk-search input", ".kiosk-search button", ".category-grid button"]);
+    await readable(page, [".kiosk-page .eyebrow", ".kiosk-page .logo small"], 12);
+    await hitTargets(page, ".kiosk-search button,.category-grid button,.kiosk-actions .button,.kiosk-actions select");
+    await capture("kiosk");
+    await page.getByRole("button", { name: "Quét", exact: true }).click();
+    await readable(page, [".scan-heading strong", ".scanner-placeholder strong"]);
+    await readable(page, [".scan-heading small", ".scanner-placeholder small", ".scan-status"], 12);
+    await hitTargets(page, ".scan-toggle,.modal-close");
+    await capture("kiosk-scanner");
+    await page.locator(".modal-close").click();
+    await page.locator(".category-grid button").filter({ hasText: "Sữa" }).first().click();
+    await readable(page, [".product-card strong", ".product-location"]);
+    await readable(page, [".product-card small", ".availability"], 12);
+    await capture("kiosk-products");
+    await page.locator(".product-card").first().click();
+    await expect(page.locator(".store-map")).toBeVisible();
+    await readable(page, [".detail-help strong", ".detail-location-card strong", ".map-heading p", ".route-steps strong"]);
+    await readable(page, [".detail-help small", ".detail-location-card small", ".route-steps small", ".map-legend"], 12);
+    for (const selector of [".map-shelf strong", ".map-facility"]) for (const node of await page.locator(selector).all()) expect(await node.evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeLessThan(11);
+    expect(await page.locator(".walk-time strong").evaluate(element => {
+      const text = element.getBoundingClientRect(), close = document.querySelector(".map-modal .modal-close")!.getBoundingClientRect();
+      return text.left < close.right && text.right > close.left && text.top < close.bottom && text.bottom > close.top;
+    }), "travel time clears the close control").toBe(false);
+    await capture("kiosk-detail");
+    await page.getByLabel("Đóng chi tiết").click();
     await signIn(page, "staff");
     await expect(page.locator(".task-copy").first()).toBeVisible();
     await readable(page, [".task-copy strong"]);
-    await readable(page, [".nav-label"], width < 768 ? 13 : 14);
+    await readable(page, [".nav-label"]);
+    await readable(page, [".side-nav .count", ".task-meta .badge", ".task-meta time"], 12);
+    await capture("staff");
+    await page.getByRole("button", { name: /^Nhiệm vụ/ }).click();
+    await hitTargets(page, ".filter-row button");
+    await readable(page, [".filter-row button"]);
+    await capture("staff-filters");
+    await page.locator(".task-row").first().click();
+    await readable(page, [".staff-task-modal .modal-head p", ".product-summary strong", ".detail-box strong"]);
+    await readable(page, [".product-summary small", ".detail-box span"], 12);
+    await hitTargets(page, ".staff-task-modal .modal-actions .button");
+    await capture("staff-task");
+    await page.getByLabel("Đóng nhiệm vụ").click();
     await readable(page, [".workspace-header p", ".task-copy > span"], 12);
     for (const control of [page.getByRole("button", { name: /^Thông báo/ }), page.locator('button[aria-label="Đăng xuất"]:visible'), page.getByRole("button", { name: "Quét ESL", exact: true })]) {
       const box = await control.boundingBox();
@@ -410,14 +518,44 @@ for (const width of [320, 390, 768]) {
       await control.click({ trial: true });
     }
     await page.getByRole("button", { name: "Quét ESL", exact: true }).click();
-    await readable(page, [".esl-scanner-modal .modal-head p", ".esl-scanner-modal input"]);
+    await readable(page, [".esl-scanner-modal .modal-head p", ".esl-scanner-modal input", ".scan-heading strong"]);
+    await capture("staff-scanner");
     await page.getByLabel("Đóng tra cứu ESL").click();
     await page.getByRole("button", { name: /^Thông báo/ }).click();
     await readable(page, [".notification-status", ".notification-list p, .notification-empty p"]);
+    await capture("staff-notifications");
     await page.keyboard.press("Escape");
     await signIn(page, "admin");
+    await readable(page, [".side-nav button"]);
+    await hitTargets(page, ".header-actions .icon-button");
+    await capture("admin");
+    await page.getByRole("button", { name: "Danh mục", exact: true }).click();
+    await readable(page, [".data-table th", ".data-table td"]);
+    await readable(page, [".data-table small", ".data-table .badge"], 12);
+    await hitTargets(page, ".row-actions .button");
+    await capture("admin-table");
+    await page.getByRole("button", { name: "Thêm sản phẩm", exact: true }).click();
+    await readable(page, [".ui-label", ".ui-input", ".ui-dialog-description"]);
+    await hitTargets(page, ".ui-dialog-footer button");
+    await capture("admin-form");
+    await page.getByRole("button", { name: "Hủy", exact: true }).click();
+    await page.getByRole("button", { name: "Nhiệm vụ", exact: true }).click();
+    await readable(page, [".admin-task-filter .ui-label", ".admin-task-filter .ui-select-trigger", ".admin-task-table td"]);
+    await readable(page, [".admin-task-badges .ui-badge"], 12);
+    await hitTargets(page, ".admin-task-filter .ui-select-trigger,.admin-task-table summary");
+    await capture("admin-tasks");
+    await page.getByRole("button", { name: "Giao nhiệm vụ", exact: true }).click();
+    await readable(page, [".ui-dialog-content .ui-label", ".ui-dialog-content .ui-select-trigger", ".ui-dialog-description"]);
+    await hitTargets(page, ".ui-dialog-content .ui-select-trigger,.ui-dialog-footer button");
+    await capture("admin-task-form");
+    await page.getByRole("button", { name: "Hủy", exact: true }).click();
+    await page.getByRole("button", { name: /^Thông báo/ }).click();
+    await readable(page, [".notification-status", ".notification-list p, .notification-empty p"]);
+    await capture("admin-notifications");
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Sơ đồ & ESL", exact: true }).click();
     await readable(page, [".admin-map-instructions", ".admin-actions .button"]);
-    expect(await page.locator(".admin-map-scroll").evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    if (width < 1280) expect(await page.locator(".admin-map-scroll").evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await capture("admin-map");
   });
 }

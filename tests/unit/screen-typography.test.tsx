@@ -72,6 +72,7 @@ describe.each([320, 390, 1280])("screen typography at %ipx", (width) => {
   it("keeps Kiosk category, search, and navigation controls readable and touchable", async () => {
     await act(async () => root.render(<KioskApp />));
     target(".category-grid button");
+    expect.soft(font(".eyebrow"), "kiosk eyebrow").toBeGreaterThanOrEqual(12);
     target(".kiosk-search .button");
     expect.soft(font(".kiosk-search input")).toBeGreaterThanOrEqual(14);
     target(".kiosk-actions .button,.kiosk-actions select");
@@ -85,13 +86,25 @@ describe.each([320, 390, 1280])("screen typography at %ipx", (width) => {
     await act(async () => host.querySelector<HTMLButtonElement>(".category-grid button")!.click());
     expect.soft(font(".product-card strong"), "product name").toBeGreaterThanOrEqual(14);
     expect.soft(font(".product-location"), "product location").toBeGreaterThanOrEqual(14);
+
     for (const selector of [".product-card small", ".original-price", ".discount-badge", ".availability"]) {
       expect.soft(font(selector), selector).toBeGreaterThanOrEqual(12);
     }
   });
 
+  it("keeps product detail help and map route instructions readable", async () => {
+    await act(async () => root.render(<KioskApp />));
+    await act(async () => host.querySelector<HTMLButtonElement>(".category-grid button")!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(".product-card")!.click());
+    expect.soft(font(".detail-help strong")).toBeGreaterThanOrEqual(14);
+    expect.soft(font(".detail-help small")).toBeGreaterThanOrEqual(12);
+    expect.soft(font(".detail-location-card strong")).toBeGreaterThanOrEqual(14);
+  });
+
   it("keeps the active scanner instruction readable without enlarging map annotations", async () => {
     await act(async () => root.render(<BarcodeScanner onDetected={() => {}} />));
+    for (const selector of [".scan-heading strong", ".scanner-placeholder strong"]) expect.soft(font(selector), selector).toBeGreaterThanOrEqual(14);
+    for (const selector of [".scan-heading small", ".scanner-placeholder small", ".scan-status"]) expect.soft(font(selector), selector).toBeGreaterThanOrEqual(12);
     await act(async () => host.querySelector<HTMLButtonElement>(".scan-toggle")!.click());
     expect.soft(font(".scanner-loading strong"), "camera loading instruction").toBeGreaterThanOrEqual(14);
     await act(async () => host.querySelector("video")!.dispatchEvent(new Event("playing")));
@@ -110,6 +123,15 @@ it("preserves the physical print QR and card dimensions", async () => {
   const print = new Window({ settings: { device: { mediaType: "print" } } });
   print.document.body.innerHTML = `<style>${stylesheet}</style><main class="esl-label-page"><section class="esl-label-sheet"><article class="esl-label-card"><div class="esl-label-qr"></div></article></section></main>`;
   const qr = print.getComputedStyle(print.document.querySelector(".esl-label-qr")!);
+  const barcode = print.document.createElement("main");
+  barcode.className = "barcode-sheet-page";
+  barcode.innerHTML = '<section class="barcode-sheet"><article class="barcode-card"><svg></svg></article></section>';
+  print.document.body.append(barcode);
+  const barcodeStyle = (selector: string) => print.getComputedStyle(print.document.querySelector(selector)!);
+  expect(parseFloat(barcodeStyle(".barcode-sheet-page").width)).toBeCloseTo(190 * 96 / 25.4, 0);
+  expect(parseFloat(barcodeStyle(".barcode-card").minHeight)).toBeCloseTo(64 * 96 / 25.4, 0);
+  expect(parseFloat(barcodeStyle(".barcode-card svg").width)).toBeCloseTo(60 * 96 / 25.4, 0);
+  expect(barcodeStyle(".barcode-card").breakInside).toBe("avoid");
   const card = print.getComputedStyle(print.document.querySelector(".esl-label-card")!);
   // happy-dom rounds physical-unit conversion; Chromium is checked separately.
   expect(parseFloat(qr.width)).toBeCloseTo(58 * 96 / 25.4, 0);
