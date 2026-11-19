@@ -92,13 +92,13 @@ describe.each([320, 390, 1280])("screen typography at %ipx", (width) => {
     }
   });
 
-  it("keeps product detail help and map route instructions readable", async () => {
+  it("keeps the compact product detail summary and location readable", async () => {
     await act(async () => root.render(<KioskApp />));
     await act(async () => host.querySelector<HTMLButtonElement>(".category-grid button")!.click());
     await act(async () => host.querySelector<HTMLButtonElement>(".product-card")!.click());
-    expect.soft(font(".detail-help strong")).toBeGreaterThanOrEqual(14);
-    expect.soft(font(".detail-help small")).toBeGreaterThanOrEqual(12);
-    expect.soft(font(".detail-location-card strong")).toBeGreaterThanOrEqual(14);
+    expect.soft(font(".detail-product-summary h2")).toBeGreaterThanOrEqual(14);
+    expect.soft(font(".detail-location-inline strong")).toBeGreaterThanOrEqual(14);
+    expect.soft(font(".detail-location-inline > span:last-child > span")).toBeGreaterThanOrEqual(12);
   });
 
   it("keeps the active scanner instruction readable without enlarging map annotations", async () => {

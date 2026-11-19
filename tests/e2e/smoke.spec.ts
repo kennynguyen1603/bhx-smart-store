@@ -463,6 +463,117 @@ test("mobile kiosk maps yogurt to its own shelf without horizontal overflow", as
   expect(layout).toEqual({ pageOverflow: 0, modalOverflow: 0 });
 });
 
+for (const viewport of [
+  { width: 320, height: 844 },
+  { width: 390, height: 844 },
+  { width: 1280, height: 900 },
+]) {
+  test(`kiosk product detail balances summary map and traceability at ${viewport.width}px`, async ({ page }, testInfo) => {
+    const target = viewport.width < 1024
+      ? { query: "giay ve sinh", name: "Giấy vệ sinh Bless You 10 cuộn" }
+      : { query: "sua tuoi", name: "Sữa tươi Vinamilk 100% 1L" };
+    await page.setViewportSize(viewport);
+    await page.goto("/kiosk");
+    await page.getByPlaceholder(/Tìm sữa/i).fill(target.query);
+    await page.getByRole("button", { name: "Tìm kiếm" }).click();
+    await page.locator(".product-card").filter({ hasText: target.name }).click();
+
+    const modal = page.locator(".map-modal");
+    const summary = modal.locator(".detail-product-summary");
+    const routeIntro = modal.locator(".detail-route-intro");
+    const map = modal.locator(".detail-map-panel");
+    const trace = modal.locator(".detail-trace-panel");
+    const firstTraceCard = trace.locator(".trace-card").first();
+    const confirm = trace.getByRole("button", { name: "Tôi đã biết đường", exact: true });
+
+    await expect(modal.locator(".detail-help")).toHaveCount(0);
+    await expect(modal.locator(".detail-location-card")).toHaveCount(0);
+    await expect(summary).toBeVisible();
+    await expect(routeIntro).toBeVisible();
+    await expect(map).toBeVisible();
+    await expect(trace).toBeVisible();
+    await expect(confirm).toBeVisible();
+    await expect(modal.locator(".route-steps > span")).toHaveCount(4);
+    await expect(firstTraceCard).toContainText("Nhà cung cấp");
+    await expect(firstTraceCard).toContainText("Xuất xứ");
+    await expect(firstTraceCard).toContainText("Chứng nhận");
+    await expect(firstTraceCard).toContainText("Lô");
+    await expect(firstTraceCard).toContainText("HSD");
+
+    const layout = await modal.evaluate((element) => {
+      const rect = (selector: string) => element.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+      const summaryRect = rect(".detail-product-summary");
+      const productImageRect = rect(".detail-emoji");
+      const productCopyRect = rect(".detail-product-copy");
+      const routeIntroRect = rect(".detail-route-intro");
+      const routeLabelRect = element.querySelector<HTMLElement>(".detail-route-intro .section-label")!.getBoundingClientRect();
+      const routeHeadingRect = element.querySelector<HTMLElement>(".detail-route-intro h2")!.getBoundingClientRect();
+      const walkTimeRect = rect(".walk-time");
+      const mapRect = rect(".detail-map-panel");
+      const traceRect = rect(".detail-trace-panel");
+      const firstTraceRect = rect(".trace-card:first-of-type");
+      const lastTraceRect = element.querySelector<HTMLElement>(".trace-card:last-of-type")!.getBoundingClientRect();
+      const confirmRect = rect(".map-confirm");
+      const closeRect = rect(".modal-close");
+      return {
+        summary: summaryRect.toJSON(),
+        productImage: productImageRect.toJSON(),
+        productCopy: productCopyRect.toJSON(),
+        routeIntro: routeIntroRect.toJSON(),
+        routeLabel: routeLabelRect.toJSON(),
+        routeHeading: routeHeadingRect.toJSON(),
+        walkTime: walkTimeRect.toJSON(),
+        map: mapRect.toJSON(),
+        trace: traceRect.toJSON(),
+        firstTrace: firstTraceRect.toJSON(),
+        lastTrace: lastTraceRect.toJSON(),
+        confirm: confirmRect.toJSON(),
+        close: closeRect.toJSON(),
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        modalOverflow: element.scrollWidth - element.clientWidth,
+      };
+    });
+
+    expect.soft(layout.summary.height).toBeLessThanOrEqual(viewport.width < 1024 ? 135 : 250);
+    expect.soft(layout.pageOverflow).toBeLessThanOrEqual(0);
+    expect.soft(layout.modalOverflow).toBeLessThanOrEqual(0);
+    expect.soft(layout.close.height).toBeGreaterThanOrEqual(44);
+    expect.soft(layout.confirm.height).toBeGreaterThanOrEqual(44);
+
+    if (viewport.width < 1024) {
+      expect.soft(layout.summary.top).toBeLessThan(layout.map.top);
+      expect.soft(layout.map.top).toBeLessThan(layout.trace.top);
+      expect.soft(Math.abs(
+        layout.productImage.top + layout.productImage.height / 2
+          - (layout.productCopy.top + layout.productCopy.height / 2),
+      )).toBeLessThanOrEqual(2);
+      expect.soft(layout.routeIntro.height).toBeLessThanOrEqual(125);
+      expect.soft(Math.abs(layout.routeLabel.top - layout.walkTime.top)).toBeLessThanOrEqual(8);
+      expect.soft(layout.routeHeading.top - layout.routeLabel.bottom).toBeGreaterThanOrEqual(0);
+      expect.soft(layout.routeHeading.top - layout.routeLabel.bottom).toBeLessThanOrEqual(4);
+      expect.soft(layout.firstTrace.height).toBeLessThanOrEqual(145);
+      expect.soft(layout.lastTrace.bottom).toBeLessThanOrEqual(layout.confirm.top);
+    } else {
+      expect.soft(layout.summary.right).toBeLessThanOrEqual(layout.map.left + 1);
+      expect.soft(Math.abs(layout.summary.left - layout.trace.left)).toBeLessThanOrEqual(1);
+      expect.soft(layout.map.top).toBeLessThanOrEqual(layout.summary.top + 1);
+      expect.soft(layout.map.bottom).toBeGreaterThanOrEqual(layout.trace.bottom - 1);
+    }
+
+    await testInfo.attach("balanced-product-detail", {
+      body: await page.screenshot({ path: testInfo.outputPath("balanced-product-detail.png") }),
+      contentType: "image/png",
+    });
+    if (viewport.width < 1024) {
+      await trace.scrollIntoViewIfNeeded();
+      await testInfo.attach("compact-mobile-traceability", {
+        body: await page.screenshot({ path: testInfo.outputPath("compact-mobile-traceability.png") }),
+        contentType: "image/png",
+      });
+    }
+  });
+}
+
 test("kiosk browse action reads as one natural label on tablet", async ({ page }) => {
   await page.setViewportSize({ width: 600, height: 844 });
   await page.goto("/kiosk");
