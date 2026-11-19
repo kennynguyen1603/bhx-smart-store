@@ -71,7 +71,7 @@ describe.each([320, 390, 1280])("application typography at %ipx", width => {
     expect(homeLinks).toHaveLength(1);
     expect(homeLinks[0].textContent).toBe("Về trang chủ");
     expect(homeLinks[0].getAttribute("href")).toBe("/");
-    readable([".login-card p"]); readable([".auth-visual > small"], 12);
+    readable([audience === "choice" ? ".login-card p" : ".login-card h2"]); readable([".auth-visual > small"], 12);
     touchable([".auth-home-link", audience === "choice" ? ".login-role-choice .button" : ".login-card form > button"]);
     if (audience !== "choice") { readable([".login-card label", ".input-wrap input"]); touchable([".input-wrap button"]); }
   });

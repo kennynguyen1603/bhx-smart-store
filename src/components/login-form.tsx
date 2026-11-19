@@ -54,8 +54,7 @@ export function LoginForm({ audience, callbackUrl }: { audience: LoginAudience; 
 
   return (
     <div className="login-card">
-      <h2>{audience === "staff" ? "Đăng nhập nhân viên" : "Đăng nhập quản trị"}</h2>
-      <p>{audience === "staff" ? "Dành cho nhân viên và quản lý cửa hàng." : "Dành cho quản lý và quản trị hệ thống."}</p>
+      <h2 className="login-title">Đăng <em>nhập</em></h2>
       <form onSubmit={submit}>
         <label>Email<div className="input-wrap"><Mail /><input type="email" name="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></div></label>
         <label>Mật khẩu<div className="input-wrap"><LockKeyhole /><input type={visible ? "text" : "password"} name="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /><button type="button" onClick={() => setVisible(!visible)} aria-label={visible ? "Ẩn mật khẩu" : "Hiện mật khẩu"}>{visible ? <EyeOff /> : <Eye />}</button></div></label>

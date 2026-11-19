@@ -350,8 +350,16 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 
 /* Audience-specific authentication entry points. */
 .auth-panel-content{display:grid;gap:16px;width:min(440px,100%)}
-.auth-home-link{justify-self:start}
+/* Login: home link sits centred directly under the card, inside the same column. */
+.auth-home-link{justify-self:center;gap:8px;padding-inline:16px;color:var(--green-700);border-color:var(--green-600);border-radius:999px;font-size:var(--font-control);white-space:nowrap}
+.auth-home-link:hover{background:var(--green-50)}
+.auth-home-link svg{flex:0 0 auto;width:18px;height:18px}
 .auth-panel-content>.login-card{width:100%}
+.login-card h2+form{margin-top:24px}
+/* Login title echoes the brand headline: serif with a green italic accent and a short accent bar. */
+.login-card .login-title{margin:0 0 12px;color:var(--green-950);font:500 clamp(40px,4.6vw,52px)/1.05 Georgia,serif;letter-spacing:-.04em}
+.login-card .login-title::before{content:"";display:block;width:54px;height:5px;margin-bottom:20px;border-radius:999px;background:linear-gradient(90deg,var(--green-600) 0 34px,transparent 34px 40px,var(--yellow) 40px)}
+.login-card .login-title em{color:var(--green-700)}
 .auth-brand{font-size:22px;letter-spacing:-.03em}
 .login-role-choice{display:grid;gap:12px}
 .login-role-choice .button{min-height:48px;white-space:normal;text-align:center;line-height:1.5}
