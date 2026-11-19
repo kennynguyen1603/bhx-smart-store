@@ -452,6 +452,78 @@ test("mobile kiosk maps yogurt to its own shelf without horizontal overflow", as
   expect(layout).toEqual({ pageOverflow: 0, modalOverflow: 0 });
 });
 
+test("kiosk browse action reads as one natural label on tablet", async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 844 });
+  await page.goto("/kiosk");
+  const action = page.getByRole("button", { name: "Xem tất cả sản phẩm", exact: true });
+  await expect(action).toBeVisible();
+
+  const label = await action.evaluate((button) => {
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+    const text = textNodes.map((node) => node.data).join("");
+    const rectFor = (start: number, end: number) => {
+      const point = (offset: number) => {
+        let remaining = offset;
+        for (const node of textNodes) {
+          if (remaining <= node.length) return { node, offset: remaining };
+          remaining -= node.length;
+        }
+        return { node: textNodes.at(-1)!, offset: textNodes.at(-1)!.length };
+      };
+      const from = point(start);
+      const to = point(end);
+      const range = document.createRange();
+      range.setStart(from.node, from.offset);
+      range.setEnd(to.node, to.offset);
+      return range.getBoundingClientRect().toJSON();
+    };
+    const firstText = "Xem tất cả";
+    const secondText = "sản phẩm";
+    const firstStart = text.indexOf(firstText);
+    const secondStart = text.indexOf(secondText);
+    return {
+      first: rectFor(firstStart, firstStart + firstText.length),
+      second: rectFor(secondStart, secondStart + secondText.length),
+    };
+  });
+
+  expect(Math.abs(label.first.top - label.second.top)).toBeLessThanOrEqual(1);
+  expect(label.second.left - label.first.right).toBeLessThanOrEqual(6);
+});
+
+for (const viewport of [
+  { width: 320, height: 844, minInputWidth: 60 },
+  { width: 390, height: 844, minInputWidth: 120 },
+  { width: 768, height: 1024, minInputWidth: 120 },
+  { width: 1024, height: 768, minInputWidth: 120 },
+]) {
+  test(`kiosk search actions stay compact at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/kiosk");
+    await expect(page.getByRole("button", { name: "Xem tất cả sản phẩm", exact: true })).toBeVisible();
+
+    const layout = await page.locator(".kiosk-search").evaluate((form) => {
+      const input = form.querySelector<HTMLInputElement>("input")!;
+      const primary = form.querySelector<HTMLButtonElement>(".button.primary")!;
+      return {
+        formHeight: form.getBoundingClientRect().height,
+        inputWidth: input.getBoundingClientRect().width,
+        inputHeight: input.getBoundingClientRect().height,
+        primaryHeight: primary.getBoundingClientRect().height,
+        overflow: form.scrollWidth - form.clientWidth,
+      };
+    });
+
+    expect(layout.formHeight).toBeLessThanOrEqual(60);
+    expect(layout.inputWidth).toBeGreaterThanOrEqual(viewport.minInputWidth);
+    expect(layout.inputHeight).toBeLessThanOrEqual(44);
+    expect(layout.primaryHeight).toBeLessThanOrEqual(44);
+    expect(layout.overflow).toBeLessThanOrEqual(0);
+  });
+}
+
 for (const viewport of [
   { width: 390, height: 844 },
   { width: 844, height: 390 },

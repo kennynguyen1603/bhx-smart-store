@@ -211,6 +211,16 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
   .header-actions { flex: 0 0 auto; }
 }
 
+/* Keep the kiosk search controls compact before the layout reaches desktop width. */
+@media screen and (max-width:1050px) {
+  .kiosk-search { height: 60px; gap: 6px; padding: 0 8px 0 12px; }
+  .kiosk-search input { flex: 1 1 0; width: auto; min-width: 0; height: var(--touch-target); }
+  .kiosk-search .button { flex: 0 0 auto; padding-inline: 12px; white-space: nowrap; }
+}
+@media screen and (max-width:480px) {
+  .kiosk-search .kiosk-scan-label,.kiosk-search .kiosk-action-detail { display: none; }
+}
+
 /* Demo screen typography: explicit text/control selectors, never print or map geometry. */
 @media screen {
   .landing-page,.auth-page,.app-shell,.kiosk-page,.modal,.ui-dialog-content,.ui-alert-dialog-content,.ui-select-content,.toast-stack,.scan-area { font-size: var(--font-body); line-height: 1.5; }
