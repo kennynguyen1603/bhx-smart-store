@@ -369,3 +369,39 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
   .admin-shell .header-actions { max-width: 100%; }
   .admin-shell .header-actions .mobile-logout { display: flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; width: auto; min-width: var(--touch-target); min-height: var(--touch-target); padding: 0 12px; font-size: var(--font-control); white-space: nowrap; }
 }
+/* Kiosk header: location card and store picker share one size; exit icon scales with its label. */
+@media screen {
+  .kiosk-header { grid-template-columns: minmax(0,1fr) auto auto; gap: 10px; }
+  .kiosk-location,.kiosk-actions .kiosk-store-select { box-sizing: border-box; width: clamp(220px,22vw,300px); height: 56px; }
+  .kiosk-location { min-width: 0; padding: 0 14px; }
+  .kiosk-location > svg { flex: 0 0 auto; width: 20px; height: 20px; }
+  .kiosk-location span { min-width: 0; line-height: 1.3; }
+  .kiosk-location strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kiosk-actions { align-items: center; gap: 10px; }
+  .kiosk-actions .kiosk-store-select { padding: 0 14px; border-radius: 10px; font-size: var(--font-control); font-weight: 700; }
+  .kiosk-store-select > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kiosk-store-select > svg { flex: 0 0 auto; width: 18px; height: 18px; }
+  .kiosk-store-menu .ui-select-item { font-size: var(--font-control); }
+  .kiosk-actions .kiosk-exit { flex: 0 0 auto; height: 56px; padding-inline: 18px; white-space: nowrap; }
+  .kiosk-actions .kiosk-exit svg { flex: 0 0 auto; width: 1.3em; height: 1.3em; }
+}
+@media screen and (max-width:760px) {
+  .kiosk-header { grid-template-columns: minmax(0,1fr); }
+  .kiosk-actions { width: 100%; }
+  .kiosk-actions .kiosk-store-select { flex: 1 1 auto; width: auto; min-width: 0; height: var(--touch-target); font-size: 16px; }
+  .kiosk-store-menu .ui-select-item { font-size: 16px; }
+  .kiosk-actions .kiosk-exit { height: var(--touch-target); padding-inline: 14px; font-size: 16px; }
+  .kiosk-actions .kiosk-exit svg { width: 20px; height: 20px; }
+}
+/* Laptop/tablet: location card, store picker and exit sit in one grid row so the first two always match. */
+@media screen and (min-width:761px) {
+  .kiosk-actions { display: contents; }
+  .kiosk-header { grid-template-columns: minmax(max-content,1fr) clamp(220px,22vw,300px) clamp(220px,22vw,300px) auto; }
+  .kiosk-header > button { min-width: max-content; }
+  .kiosk-location,.kiosk-actions .kiosk-store-select { width: 100%; }
+}
+@media screen and (min-width:761px) and (max-width:1050px) {
+  .kiosk-header { grid-template-columns: max-content minmax(0,1fr) minmax(0,1fr) auto; gap: 8px; padding-inline: 20px; }
+  .kiosk-location,.kiosk-actions .kiosk-store-select { height: 52px; }
+  .kiosk-actions .kiosk-exit { height: 52px; padding-inline: 14px; }
+}

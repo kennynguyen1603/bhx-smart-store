@@ -1,6 +1,27 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import nextEnv from "@next/env";
 
+const kioskStoreTrigger = (page: Page) => page.locator(".kiosk-store-select");
+async function expectKioskStore(page: Page, code: string | RegExp = /.+/) {
+  await expect(kioskStoreTrigger(page)).toHaveAttribute("data-store-code", code);
+}
+async function kioskStoreCode(page: Page) {
+  await expectKioskStore(page);
+  return (await kioskStoreTrigger(page).getAttribute("data-store-code"))!;
+}
+async function kioskStoreCodes(page: Page) {
+  await kioskStoreTrigger(page).click();
+  const codes = await page.locator(".kiosk-store-menu [data-store-code]").evaluateAll((items) => items.map((item) => item.getAttribute("data-store-code")!));
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".kiosk-store-menu")).toHaveCount(0);
+  return codes;
+}
+async function selectKioskStore(page: Page, code: string) {
+  await kioskStoreTrigger(page).click();
+  await page.locator(`.kiosk-store-menu [data-store-code="${code}"]`).click();
+  await expectKioskStore(page, code);
+}
+
 async function authenticateStaffApp(page: Page, email: string) {
   const request = page.context().request;
   const csrfResponse = await request.get("/api/auth/csrf");
@@ -39,7 +60,7 @@ test("HID barcode immediately after bootstrap opens detail from the autofocused 
     if (url.pathname === "/api/kiosk/products/search") searches.push(url);
   });
   await page.goto("/kiosk");
-  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await expectKioskStore(page);
   await expect(page.getByPlaceholder(/Tìm sữa/i)).toBeFocused();
   await page.keyboard.type("8934673574211");
   await page.keyboard.press("Enter");
@@ -57,7 +78,7 @@ test("human typing and Enter in the search input keeps ordinary search", async (
     if (url.pathname === "/api/kiosk/products/search") searches.push(url);
   });
   await page.goto("/kiosk");
-  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await expectKioskStore(page);
   await expect(page.getByPlaceholder(/Tìm sữa/i)).toBeFocused();
   await page.keyboard.type("sua tuoi", { delay: 80 });
   await page.keyboard.press("Enter");
@@ -70,9 +91,8 @@ test("human typing and Enter in the search input keeps ordinary search", async (
 
 test("printed product barcode opens the kiosk product detail and map", async ({ page }) => {
   await page.goto("/kiosk");
-  await expect(page.getByRole("combobox")).not.toHaveValue("");
-  await page.getByRole("combobox").selectOption("NT-Q5");
-  await expect(page.getByRole("combobox")).toHaveValue("NT-Q5");
+  await expectKioskStore(page);
+  await selectKioskStore(page, "NT-Q5");
   await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
   await page.keyboard.type("8934673574211");
   await page.keyboard.press("Enter");
@@ -84,9 +104,8 @@ test("printed product barcode opens the kiosk product detail and map", async ({ 
 
 test("ESL at kiosk opens the same product detail and map as its printed EAN", async ({ page }) => {
   await page.goto("/kiosk");
-  await expect(page.getByRole("combobox")).not.toHaveValue("");
-  await page.getByRole("combobox").selectOption("NT-Q5");
-  await expect(page.getByRole("combobox")).toHaveValue("NT-Q5");
+  await expectKioskStore(page);
+  await selectKioskStore(page, "NT-Q5");
   await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
   await page.keyboard.type("esl-nt-q5-l-02");
   await page.keyboard.press("Enter");
@@ -100,9 +119,8 @@ test("unknown ESL at kiosk shows friendly scanner copy while ordinary search kee
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/kiosk");
-  await expect(page.getByRole("combobox")).not.toHaveValue("");
-  await page.getByRole("combobox").selectOption("NT-Q5");
-  await expect(page.getByRole("combobox")).toHaveValue("NT-Q5");
+  await expectKioskStore(page);
+  await selectKioskStore(page, "NT-Q5");
   await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
   await page.keyboard.type("ESL-NT-Q5-Z-99");
   await page.keyboard.press("Enter");
@@ -118,7 +136,7 @@ test("unknown ESL at kiosk shows friendly scanner copy while ordinary search kee
 
 test("exact ESL at kiosk does not treat a scanned substring as a product search", async ({ page }) => {
   await page.goto("/kiosk");
-  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await expectKioskStore(page);
   await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
   await page.keyboard.type("893467357");
   await page.keyboard.press("Enter");
@@ -142,8 +160,8 @@ test("custom ESL at kiosk retains a second shelf through detail map and cache", 
   try {
     await prisma.eSL.create({ data: { code: customCode, storeId: store.id, productId: product.id, shelfId: secondShelf.id } });
     await page.goto("/kiosk");
-    await expect(page.getByRole("combobox")).not.toHaveValue("");
-    await page.getByRole("combobox").selectOption("NT-Q5");
+    await expectKioskStore(page);
+    await selectKioskStore(page, "NT-Q5");
     await page.getByRole("heading", { name: /Bạn đang tìm/i }).click();
 
     for (const [code, expectedShelf] of [["ESL-NT-Q5-L-02", "L-02"], [customCode, "L-04"], ["ESL-NT-Q5-L-02", "L-02"], [customCode, "L-04"]]) {
@@ -195,11 +213,10 @@ test("product detail cache opens immediately, reuses requests, and isolates stor
   expect({ detailRequests, mapRequests }).toEqual({ detailRequests: 1, mapRequests: 1 });
 
   await page.getByRole("button", { name: "Đóng chi tiết" }).click();
-  const storeSelector = page.getByRole("combobox");
-  const currentStore = await storeSelector.inputValue();
-  const otherStore = await storeSelector.locator("option").evaluateAll((options, current) => options.map((option) => (option as HTMLOptionElement).value).find((value) => value !== current), currentStore);
+  const currentStore = await kioskStoreCode(page);
+  const otherStore = (await kioskStoreCodes(page)).find((value) => value !== currentStore);
   expect(otherStore).toBeTruthy();
-  await storeSelector.selectOption(otherStore!);
+  await selectKioskStore(page, otherStore!);
   await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
   await page.getByRole("button", { name: "Tìm kiếm" }).click();
   await page.locator(".product-card").filter({ hasText: "Sữa tươi Vinamilk 100% 1L" }).click();
@@ -238,16 +255,14 @@ test("product detail cache ignores a stale search after switching stores", async
   });
 
   await page.goto("/kiosk");
-  const storeSelector = page.getByRole("combobox");
-  await expect(storeSelector).not.toHaveValue("");
-  const currentStore = await storeSelector.inputValue();
-  const otherStore = await storeSelector.locator("option").evaluateAll((options, current) => options.map((option) => (option as HTMLOptionElement).value).find((value) => value !== current), currentStore);
+  const currentStore = await kioskStoreCode(page);
+  const otherStore = (await kioskStoreCodes(page)).find((value) => value !== currentStore);
   expect(otherStore).toBeTruthy();
 
   await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
   await page.getByRole("button", { name: "Tìm kiếm" }).click();
   await expect.poll(() => delayedSearches).toBe(1);
-  await storeSelector.selectOption(otherStore!);
+  await selectKioskStore(page, otherStore!);
   await expect(page.locator(".kiosk-search .button.primary")).toBeEnabled();
   const staleResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/kiosk/products/search");
   releaseSearch();
@@ -276,7 +291,7 @@ test("product detail cache ignores stale openExact search after automatic reset"
   });
 
   await page.goto("/kiosk");
-  await expect(page.getByRole("combobox")).not.toHaveValue("");
+  await expectKioskStore(page);
   await page.getByPlaceholder(/Tìm sữa/i).evaluate((input: HTMLInputElement) => input.blur());
   await page.keyboard.type("8934588012345");
   await page.keyboard.press("Enter");
@@ -296,10 +311,7 @@ test("product detail cache ignores stale openExact search after automatic reset"
 test("seeded FEFO demo preserves markdown and regular prices with printable barcode and ESL fixtures", async ({ page }) => {
   // Read the real seed through the public UI; this scenario never writes to the database.
   await page.goto("/kiosk");
-  const storeSelector = page.getByRole("combobox");
-  await expect(storeSelector).not.toHaveValue("");
-  await storeSelector.selectOption("NT-Q5");
-  await expect(storeSelector).toHaveValue("NT-Q5");
+  await selectKioskStore(page, "NT-Q5");
 
   for (const fixture of [
     { query: "GREENS-500", name: "Cải xanh VietGAP gói 500g", current: "14.320 ₫", original: "17.900 ₫" },
@@ -367,8 +379,7 @@ test("discounted FEFO price is consistent in kiosk list and detail", async ({ pa
     });
 
     await page.goto("/kiosk");
-    const storeSelector = page.getByRole("combobox");
-    await expect(storeSelector).toHaveValue(store.code);
+    await expectKioskStore(page, store.code);
     await page.getByPlaceholder(/Tìm sữa/i).fill("sua tuoi");
     await page.getByRole("button", { name: "Tìm kiếm" }).click();
 
