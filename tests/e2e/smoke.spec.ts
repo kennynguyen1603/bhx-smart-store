@@ -505,6 +505,81 @@ test("kiosk browse action reads as one natural label on tablet", async ({ page }
 });
 
 for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 768, height: 1024 },
+]) {
+  test(`kiosk results keep the compact heading and stock badge at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/kiosk");
+    await expectKioskStore(page);
+    await page.getByRole("button", { name: "Xem tất cả sản phẩm", exact: true }).click();
+
+    const resultsHeader = page.locator(".kiosk-results-header");
+    const firstCard = page.locator(".product-card").first();
+    await expect(resultsHeader).toBeVisible();
+    await expect(firstCard).toBeVisible();
+
+    const mainPadding = await page.locator(".kiosk-main").evaluate((main) => {
+      const style = getComputedStyle(main);
+      return {
+        top: Number.parseFloat(style.paddingTop),
+        bottom: Number.parseFloat(style.paddingBottom),
+      };
+    });
+
+    const headerLayout = await resultsHeader.evaluate((header) => {
+      const copy = header.querySelector<HTMLElement>(".kiosk-results-copy")!;
+      const back = header.querySelector<HTMLButtonElement>(".kiosk-results-back")!;
+      const headerRect = header.getBoundingClientRect();
+      const copyRect = copy.getBoundingClientRect();
+      const backRect = back.getBoundingClientRect();
+      return {
+        backWidth: backRect.width,
+        backHeight: backRect.height,
+        backBeforeCopy: backRect.right <= copyRect.left + 1,
+        backInsideHeader: backRect.top >= headerRect.top && backRect.bottom <= headerRect.bottom,
+      };
+    });
+
+    expect.soft(mainPadding).toEqual({ top: 20, bottom: 20 });
+    expect.soft(headerLayout.backWidth).toBeGreaterThanOrEqual(44);
+    expect.soft(headerLayout.backWidth).toBeLessThanOrEqual(48);
+    expect.soft(headerLayout.backHeight).toBeGreaterThanOrEqual(44);
+    expect.soft(headerLayout.backHeight).toBeLessThanOrEqual(48);
+    expect.soft(headerLayout.backBeforeCopy).toBe(true);
+    expect.soft(headerLayout.backInsideHeader).toBe(true);
+
+    const cardLayout = await firstCard.evaluate((card) => {
+      const badge = card.querySelector<HTMLElement>(".availability")!;
+      const category = card.querySelector<HTMLElement>("small")!;
+      const title = card.querySelector<HTMLElement>("strong")!;
+      const cardRect = card.getBoundingClientRect();
+      const badgeRect = badge.getBoundingClientRect();
+      const categoryRect = category.getBoundingClientRect();
+      return {
+        padding: Number.parseFloat(getComputedStyle(card).paddingTop),
+        badgeTop: Math.round(badgeRect.top - cardRect.top),
+        badgeRight: Math.round(cardRect.right - badgeRect.right),
+        badgeCategoryOffset: Math.round(Math.abs(badgeRect.top - categoryRect.top)),
+        categoryTitleGap: Math.round(title.getBoundingClientRect().top - categoryRect.bottom),
+        badgeAboveTitle: badgeRect.bottom <= title.getBoundingClientRect().top,
+        pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+
+    expect.soft(cardLayout.padding).toBe(20);
+    expect.soft(cardLayout.badgeTop).toBeGreaterThanOrEqual(16);
+    expect.soft(cardLayout.badgeTop).toBeLessThanOrEqual(22);
+    expect.soft(cardLayout.badgeRight).toBeGreaterThanOrEqual(16);
+    expect.soft(cardLayout.badgeRight).toBeLessThanOrEqual(22);
+    expect.soft(cardLayout.badgeCategoryOffset).toBeLessThanOrEqual(2);
+    expect.soft(cardLayout.categoryTitleGap).toBeLessThanOrEqual(6);
+    expect.soft(cardLayout.badgeAboveTitle).toBe(true);
+    expect.soft(cardLayout.pageOverflow).toBeLessThanOrEqual(0);
+  });
+}
+
+for (const viewport of [
   { width: 320, height: 844, minInputWidth: 60 },
   { width: 390, height: 844, minInputWidth: 120 },
   { width: 768, height: 1024, minInputWidth: 120 },
