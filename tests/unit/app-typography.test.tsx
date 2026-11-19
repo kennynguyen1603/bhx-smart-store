@@ -66,11 +66,15 @@ describe.each([320, 390, 1280])("application typography at %ipx", width => {
     touchable([".demo-links a"]);
   });
   it.each(["choice", "staff", "admin"] as const)("keeps %s login copy and controls readable", async audience => {
-    await mount(<LoginShell>{audience === "choice" ? <LoginRoleChoice /> : <LoginForm audience={audience} />}</LoginShell>);
+    await mount(<LoginShell audience={audience === "choice" ? undefined : audience}>{audience === "choice" ? <LoginRoleChoice /> : <LoginForm audience={audience} />}</LoginShell>);
     const homeLinks = document.querySelectorAll("a.auth-home-link");
     expect(homeLinks).toHaveLength(1);
     expect(homeLinks[0].textContent).toBe("Về trang chủ");
     expect(homeLinks[0].getAttribute("href")).toBe("/");
+    // Only the admin login carries the admin badge and the admin visual variant.
+    expect(document.querySelectorAll(".login-badge")).toHaveLength(audience === "admin" ? 1 : 0);
+    expect(document.querySelector(".auth-page")!.classList.contains("admin")).toBe(audience === "admin");
+    if (audience === "admin") readable([".login-badge"], 12);
     readable([audience === "choice" ? ".login-card p" : ".login-card h2"]); readable([".auth-visual > small"], 12);
     touchable([".auth-home-link", audience === "choice" ? ".login-role-choice .button" : ".login-card form > button"]);
     if (audience !== "choice") { readable([".login-card label", ".input-wrap input"]); touchable([".input-wrap button"]); }

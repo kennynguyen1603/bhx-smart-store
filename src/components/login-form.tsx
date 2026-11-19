@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail } from "lucide-react";
+import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, ShieldCheck } from "lucide-react";
 import { signIn, signOut } from "next-auth/react";
 import type { Session } from "next-auth";
 import { FormEvent, useState } from "react";
@@ -53,7 +53,8 @@ export function LoginForm({ audience, callbackUrl }: { audience: LoginAudience; 
   }
 
   return (
-    <div className="login-card">
+    <div className={audience === "admin" ? "login-card admin" : "login-card"}>
+      {audience === "admin" && <span className="login-badge"><ShieldCheck aria-hidden="true" />Khu vực quản trị</span>}
       <h2 className="login-title">Đăng <em>nhập</em></h2>
       <form onSubmit={submit}>
         <label>Email<div className="input-wrap"><Mail /><input type="email" name="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></div></label>

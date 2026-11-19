@@ -3,9 +3,12 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { safeAudienceCallback, type LoginAudience } from "@/lib/demo-roles";
 
-export function LoginShell({ children }: { children: ReactNode }) {
-  return <main className="auth-page">
-    <section className="auth-visual"><strong className="auth-brand">BHX Smart Store</strong><div><h1>Vận hành cửa hàng<br /><em>trong tầm tay.</em></h1><p>Đăng nhập để tiếp tục công việc của bạn.</p></div><small>BHX Smart In-store Operations</small></section>
+export function LoginShell({ children, audience }: { children: ReactNode; audience?: LoginAudience }) {
+  const admin = audience === "admin";
+  return <main className={admin ? "auth-page admin" : "auth-page"}>
+    <section className="auth-visual"><strong className="auth-brand">BHX Smart Store</strong><div>{admin
+      ? <><h1>Quản trị<br /><em>toàn hệ thống.</em></h1><p>Quản lý cửa hàng, danh mục và nhân sự tại một nơi.</p></>
+      : <><h1>Vận hành cửa hàng<br /><em>trong tầm tay.</em></h1><p>Đăng nhập để tiếp tục công việc của bạn.</p></>}</div><small>BHX Smart In-store Operations</small></section>
     <section className="auth-panel">
       <div className="auth-panel-content">
         {children}

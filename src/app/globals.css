@@ -360,6 +360,12 @@ svg{width:1.2rem;height:1.2rem}.spin{animation:spin 1s linear infinite}.muted{co
 .login-card .login-title{margin:0 0 12px;color:var(--green-950);font:500 clamp(40px,4.6vw,52px)/1.05 Georgia,serif;letter-spacing:-.04em}
 .login-card .login-title::before{content:"";display:block;width:54px;height:5px;margin-bottom:20px;border-radius:999px;background:linear-gradient(90deg,var(--green-600) 0 34px,transparent 34px 40px,var(--yellow) 40px)}
 .login-card .login-title em{color:var(--green-700)}
+/* Admin login: a dark "Khu vực quản trị" badge replaces the accent bar, and the visual panel goes deeper. */
+.login-badge{display:inline-flex;align-items:center;gap:7px;margin-bottom:18px;padding:6px 13px 6px 10px;border-radius:999px;color:white;background:var(--green-950);font-size:13px;font-weight:700;letter-spacing:.02em}
+.login-badge svg{flex:0 0 auto;width:16px;height:16px;color:var(--yellow)}
+.login-card.admin .login-title::before{display:none}
+.auth-page.admin .auth-visual{background:radial-gradient(120% 80% at 0 100%,rgba(242,211,50,.10),transparent 60%),linear-gradient(160deg,#04271a,#021a11)}
+.auth-page.admin .auth-visual h1 em{color:var(--yellow)}
 .auth-brand{font-size:22px;letter-spacing:-.03em}
 .login-role-choice{display:grid;gap:12px}
 .login-role-choice .button{min-height:48px;white-space:normal;text-align:center;line-height:1.5}
