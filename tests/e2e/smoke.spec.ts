@@ -1360,6 +1360,7 @@ test.describe("Admin core forms", () => {
     await expect(dialog.getByLabel("Mã vạch")).toHaveAttribute("readonly", "");
     await expect(dialog.getByLabel("Danh mục", { exact: true })).toHaveValue("Sữa tươi");
     await dialog.getByRole("button", { name: "Lưu", exact: true }).click(); await expect(dialog).toHaveCount(0);
+    await page.getByRole("tab", { name: "Nhà cung cấp", exact: true }).click();
     await page.locator(".log-row").filter({ hasText: "SUP-02" }).getByRole("button", { name: "Sửa", exact: true }).click();
     await expect(dialog.getByLabel("Mã nhà cung cấp")).toHaveValue("SUP-02");
     await expect(dialog.getByLabel("Quốc gia")).toHaveValue("Việt Nam");

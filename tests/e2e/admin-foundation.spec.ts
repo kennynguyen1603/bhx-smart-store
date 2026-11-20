@@ -118,6 +118,7 @@ test("human-readable references hide raw IDs in all immutable reference forms", 
   const { referenceOverview, referenceStore, lot } = await import("../fixtures/admin-reference");
   await page.route("**/api/admin/overview**", route => route.fulfill({ json: referenceOverview }));
   await login(page, "admin@demo.bhx"); await page.getByRole("button", { name: "Danh mục", exact: true }).click();
+  await page.getByRole("tab", { name: "Lô hàng", exact: true }).click();
   await page.getByRole("row").filter({ hasText: "LOT-TWO" }).getByRole("button", { name: "Sửa", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel("Cửa hàng", { exact: true })).toHaveValue(referenceStore.name);

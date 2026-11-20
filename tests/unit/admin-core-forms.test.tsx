@@ -59,7 +59,8 @@ async function setInput(label: string, value: string) {
 async function open(kind: string, mode = "edit") {
   await act(async () => root.render(<AdminApp user={user} />)); await settle();
   if (kind === "product" || kind === "supplier") await act(async () => button("Danh mục").click());
-  if (mode === "create") await act(async () => button(kind === "store" ? "Thêm cửa hàng" : kind === "product" ? "Thêm sản phẩm" : "Nhà cung cấp").click());
+  if (kind === "supplier") await act(async () => button("Nhà cung cấp").click());
+  if (mode === "create") await act(async () => button(kind === "store" ? "Thêm cửa hàng" : kind === "product" ? "Thêm sản phẩm" : "Thêm nhà cung cấp").click());
   else await act(async () => {
     if (kind === "store") button("Sửa cửa hàng").click();
     else if (kind === "supplier") button("Sửa", [...document.querySelectorAll(".log-row")].find((el) => el.textContent?.includes("SUP-02"))).click();

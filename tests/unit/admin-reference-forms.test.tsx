@@ -55,7 +55,7 @@ async function select(label: string, option: string) {
   expect(el, option).toBeDefined(); await act(async () => el!.click());
 }
 const edits = [
-  { kind: "lot", tab: "Danh mục", trigger: "Sửa", row: "LOT-TWO", resource: "lots", id: lot.id, readonly: { "Mã lô": lot.batchCode, "Cửa hàng": referenceStore.name, "Sản phẩm": lot.product.name, "Nhà cung cấp": lot.supplier.name, "Ngày nhận": lot.receivedAt }, inputs: { "Xuất xứ": lot.origin, "Hạn sử dụng": "2026-12-25", "Số lượng": "17" }, body: { origin: lot.origin, expiryDate: "2026-12-25", quantity: 17 } },
+  { kind: "lot", tab: "Danh mục", view: "Lô hàng", trigger: "Sửa", row: "LOT-TWO", resource: "lots", id: lot.id, readonly: { "Mã lô": lot.batchCode, "Cửa hàng": referenceStore.name, "Sản phẩm": lot.product.name, "Nhà cung cấp": lot.supplier.name, "Ngày nhận": lot.receivedAt }, inputs: { "Xuất xứ": lot.origin, "Hạn sử dụng": "2026-12-25", "Số lượng": "17" }, body: { origin: lot.origin, expiryDate: "2026-12-25", quantity: 17 } },
   { kind: "zone", tab: "Sơ đồ & ESL", trigger: zoneTrigger(), row: "", resource: "zones", id: "zone-second", readonly: { "Cửa hàng": referenceStore.name }, inputs: { "Tên khu vực": "Khu thứ hai", "Màu": "#abcdef", "Vị trí X": "2", "Vị trí Y": "3", "Chiều rộng": "4", "Chiều cao": "2" }, body: { name: "Khu thứ hai", color: "#abcdef", x: 2, y: 3, width: 4, height: 2 } },
   { kind: "shelf", tab: "Sơ đồ & ESL", trigger: "Sửa kệ K-02", row: "", resource: "shelves", id: shelf.id, readonly: { "Mã kệ": shelf.code, "Cửa hàng": referenceStore.name }, inputs: { "Tên kệ": shelf.label, "Vị trí X": "3", "Vị trí Y": "2", "Chiều rộng": "2", "Chiều cao": "3" }, body: { label: shelf.label, zoneId: shelf.zoneId, x: 3, y: 2, width: 2, height: 3 } },
   { kind: "esl", tab: "Sơ đồ & ESL", trigger: "Sửa ESL ESL-TWO", row: "", resource: "esls", id: "esl-second", readonly: { "Mã ESL": "ESL-TWO", "Cửa hàng": referenceStore.name }, inputs: {}, body: { shelfId: shelf.id, productId: "product-second", ledOn: true } },
@@ -63,12 +63,13 @@ const edits = [
   { kind: "user", tab: "Người dùng", trigger: "Sửa", row: account.email, resource: "users", id: account.id, readonly: { "Email": account.email }, inputs: { "Họ tên": account.name, "Mật khẩu mới": "" }, body: { name: account.name, role: "MANAGER", active: false, storeIds: [otherStore.id, "store"] } },
   { kind: "store", tab: "Tổng quan", trigger: "Sửa cửa hàng", row: "", resource: "stores", id: referenceStore.id, readonly: { "Mã cửa hàng": referenceStore.code }, inputs: { "Tên cửa hàng": referenceStore.name }, body: { name: referenceStore.name, address: referenceStore.address, mapWidth: referenceStore.mapWidth, mapHeight: referenceStore.mapHeight, active: true } },
   { kind: "product", tab: "Danh mục", trigger: "Sửa", row: secondProduct.sku, resource: "products", id: secondProduct.id, readonly: { "SKU": secondProduct.sku, "Mã vạch": secondProduct.barcode }, inputs: { "Tên sản phẩm": secondProduct.name }, body: { name: secondProduct.name, category: secondProduct.category, unit: secondProduct.unit, basePriceVnd: secondProduct.basePriceVnd, emoji: secondProduct.emoji } },
-  { kind: "supplier", tab: "Danh mục", trigger: "Sửa", row: secondSupplier.code, resource: "suppliers", id: secondSupplier.id, readonly: { "Mã nhà cung cấp": secondSupplier.code }, inputs: { "Tên nhà cung cấp": secondSupplier.name }, body: { name: secondSupplier.name, country: secondSupplier.country, certificate: secondSupplier.certificate, active: true } },
+  { kind: "supplier", tab: "Danh mục", view: "Nhà cung cấp", trigger: "Sửa", row: secondSupplier.code, resource: "suppliers", id: secondSupplier.id, readonly: { "Mã nhà cung cấp": secondSupplier.code }, inputs: { "Tên nhà cung cấp": secondSupplier.name }, body: { name: secondSupplier.name, country: secondSupplier.country, certificate: secondSupplier.certificate, active: true } },
   { kind: "inventory", tab: "Tồn kho", trigger: "Sửa", row: "Sữa tươi hai", resource: "inventories", id: "inventory", readonly: {}, inputs: { "Số lượng trên kệ": "7", "Số lượng kho sau": "19" }, body: { onShelf: 7, backroom: 19, capacity: 24, lowThreshold: 4 } },
 ];
 function zoneTrigger() { return "Khu thứ hai"; }
 async function openEdit(sample: typeof edits[number]) {
   await mount(sample.tab);
+  if ("view" in sample && sample.view) await click(sample.view);
   const row = sample.row ? [...document.querySelectorAll("tr,.log-row")].find(el => el.textContent?.includes(sample.row)) : document;
   // Quarantined rules display their action instead of the percentage.
   await click(sample.trigger, row || document); return dialog();
@@ -99,7 +100,7 @@ it("creates ESL with selected reference IDs", async () => {
   expect(writes[0]).toEqual({ url: "/api/admin/esls", method: "POST", body: { storeId: "store", code: "NEW-ESL", shelfId: shelf.id, productId: "product-second" } });
 });
 it("creates lots with selected references and validated dates", async () => {
-  await mount("Danh mục"); await click("Thêm lô"); await fill("Mã lô", "NEW-LOT"); await select("Sản phẩm", "Sản phẩm thứ hai"); await select("Nhà cung cấp", "Nhà cung cấp thứ hai"); await fill("Xuất xứ", "Đà Lạt"); await fill("Ngày nhận", "2026-11-16"); await fill("Hạn sử dụng", "2026-02-30"); await fill("Số lượng", "20"); await submit();
+  await mount("Danh mục"); await click("Lô hàng"); await click("Thêm lô"); await fill("Mã lô", "NEW-LOT"); await select("Sản phẩm", "Sản phẩm thứ hai"); await select("Nhà cung cấp", "Nhà cung cấp thứ hai"); await fill("Xuất xứ", "Đà Lạt"); await fill("Ngày nhận", "2026-11-16"); await fill("Hạn sử dụng", "2026-02-30"); await fill("Số lượng", "20"); await submit();
   expect(writes).toHaveLength(0); expect(dialog().textContent).toContain("Hạn sử dụng không hợp lệ"); await fill("Hạn sử dụng", "2026-12-25"); await submit();
   expect(writes[0].body).toEqual({ storeId: "store", productId: "product-second", supplierId: "supplier-second", batchCode: "NEW-LOT", origin: "Đà Lạt", receivedAt: "2026-11-16", expiryDate: "2026-12-25", quantity: 20 });
 });
@@ -135,7 +136,7 @@ it("preserves unavailable persisted memberships and references on edit", async (
 });
 it("disables create actions and explains missing prerequisites", async () => {
   data.products = []; data.suppliers = []; data.stores[0].shelves = [];
-  await mount("Danh mục"); expect(button("Thêm lô").disabled).toBe(true); expect(document.body.textContent).toContain("Cần cửa hàng, sản phẩm và nhà cung cấp để thêm lô.");
+  await mount("Danh mục"); await click("Lô hàng"); expect(button("Thêm lô").disabled).toBe(true); expect(document.body.textContent).toContain("Cần cửa hàng, sản phẩm và nhà cung cấp để thêm lô.");
   await click("Sơ đồ & ESL"); expect(button("Gắn ESL").disabled).toBe(true); expect(document.body.textContent).toContain("Cần cửa hàng, kệ và sản phẩm để gắn ESL.");
 });
 it.each(edits)("$kind preserves values on failure and blocks repeated submits while pending", async sample => {
@@ -157,8 +158,11 @@ const destructive = [
   ["FEFO", "Xoá", "", "fefo-rules", rule.id, "Xoá quy tắc FEFO", "5 ngày"],
   ["Người dùng", "Khoá", account.email, "users", account.id, "Khoá tài khoản", account.email],
 ];
+// Lots and suppliers live behind the Danh mục sub-tabs.
+const catalogViews: Record<string, string> = { "SUP-02": "Nhà cung cấp", "LOT-TWO": "Lô hàng" };
 it.each(destructive)("confirms %s %s with resource copy, cancel, one pending write", async (tab, trigger, rowText, resource, id, title, name) => {
-  await mount(tab); const row = rowText ? [...document.querySelectorAll("tr,.log-row")].find(el => el.textContent?.includes(rowText))! : document;
+  await mount(tab); if (catalogViews[rowText]) await click(catalogViews[rowText]);
+  const row = rowText ? [...document.querySelectorAll("tr,.log-row")].find(el => el.textContent?.includes(rowText))! : document;
   await click(trigger, row); let confirmDialog = document.querySelector<HTMLElement>('[role="alertdialog"]'); expect(confirmDialog).not.toBeNull(); expect(confirmDialog!.textContent).toContain(title); expect(confirmDialog!.textContent).toContain(name); await click("Hủy", confirmDialog!); expect(writes).toHaveLength(0);
   await click(trigger, row); confirmDialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
   let release!: (response: Response) => void; write = () => new Promise(done => { release = done; });
