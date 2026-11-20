@@ -459,7 +459,7 @@ for (const width of [320, 390, 768, 1280]) {
         overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         tokens: Object.fromEntries(["--font-body", "--font-control", "--font-meta", "--font-title-sm", "--touch-target"].map(token => [token, getComputedStyle(document.documentElement).getPropertyValue(token).trim()])),
         text: [...body.querySelectorAll(".card-copy,.login-card,.task-row,.staff-task-modal,.data-table,.ui-dialog-content,.kiosk-page,.notification-row")].flatMap(root => [...root.querySelectorAll("strong,small,p,label,input,button,th,td,.badge,.nav-label,.eyebrow")]).filter(node => (node as HTMLElement).offsetWidth > 0).map(node => ({ class: node.className, tag: node.tagName, font: getComputedStyle(node).fontSize })),
-        controls: [...body.querySelectorAll(".header-actions button,.filter-row button,.modal-close,.notification-read-one")].filter(node => (node as HTMLElement).offsetWidth > 0).map(node => ({ label: node.getAttribute("aria-label") || node.textContent, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height })),
+        controls: [...body.querySelectorAll(".header-actions button,.task-filter-trigger,.modal-close,.notification-read-one")].filter(node => (node as HTMLElement).offsetWidth > 0).map(node => ({ label: node.getAttribute("aria-label") || node.textContent, width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height })),
         map: [...body.querySelectorAll(".map-shelf strong,.map-facility")].map(node => ({ class: node.className, font: getComputedStyle(node).fontSize })),
       }));
       const path = testInfo.outputPath(`${width}-${name}-measurements.json`);
@@ -513,8 +513,8 @@ for (const width of [320, 390, 768, 1280]) {
     await readable(page, [".side-nav .count", ".task-meta .badge", ".task-meta time"], 12);
     await capture("staff");
     await page.getByRole("button", { name: /^Nhiệm vụ/ }).click();
-    await hitTargets(page, ".filter-row button");
-    await readable(page, [".filter-row button"]);
+    await hitTargets(page, ".task-filter-trigger");
+    await readable(page, [".task-filter-trigger"]);
     await capture("staff-filters");
     await page.locator(".task-row").first().click();
     await readable(page, [".staff-task-modal .modal-head p", ".product-summary strong", ".detail-box strong"]);

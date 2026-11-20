@@ -37,6 +37,16 @@ function button(text: string) {
   expect(result, `button: ${text}`).toBeDefined(); return result!;
 }
 async function click(target: HTMLElement) { await act(async () => target.click()); }
+/** Opens the task filter dropdown and returns its options as [label, count] pairs. */
+async function openTaskFilter() {
+  await click(container.querySelector<HTMLButtonElement>(".task-filter-trigger")!);
+  return [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((option) => [option.querySelector(".task-filter-label")?.textContent, option.querySelector(".task-filter-count")?.textContent]);
+}
+async function chooseTaskFilter(label: string) {
+  await openTaskFilter();
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.querySelector(".task-filter-label")?.textContent === label);
+  expect(option, `filter option: ${label}`).toBeDefined(); await click(option!);
+}
 async function render(role: Session["user"]["role"] = "STAFF") {
   await act(async () => root.render(createElement(StaffApp, { user: { ...user, role } })));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
@@ -154,7 +164,12 @@ describe("deliberate staff task interaction", () => {
 
   it("renders all five Vietnamese status badges alongside priority", async () => {
     tasks = (["OPEN", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED"] as const).map((status) => ({ ...task, id: status, title: status, status }));
-    await render(); await click(container.querySelectorAll<HTMLButtonElement>(".side-nav button")[1]); await click(button("Bổ sung"));
+    await render(); await click(container.querySelectorAll<HTMLButtonElement>(".side-nav button")[1]);
+    expect(container.querySelectorAll(".task-row")).toHaveLength(3);
+    expect(await openTaskFilter()).toEqual([["Đang mở", "3"], ["Bổ sung hàng", "5"], ["FEFO", "0"], ["Cách ly", "0"], ["Hoàn thành", "1"]]);
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await chooseTaskFilter("Bổ sung hàng");
+    expect(container.querySelector(".task-filter-trigger")?.textContent).toBe("Bổ sung hàng5");
     const rows = [...container.querySelectorAll(".task-row")];
     expect(rows).toHaveLength(5);
     const variants = new Set<string | undefined>();
@@ -162,7 +177,7 @@ describe("deliberate staff task interaction", () => {
       const badge = row.querySelector('[data-slot="badge"]');
       expect(badge?.textContent).toBe(["Mới", "Đang làm", "Bị chặn", "Hoàn thành", "Đã huỷ"][index]);
       variants.add((badge as HTMLElement)?.dataset.variant);
-      expect(row.textContent).toContain("HIGH");
+      expect(row.textContent).toContain("Cao");
     });
     expect(variants.size).toBe(5);
   });

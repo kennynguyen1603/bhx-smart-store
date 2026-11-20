@@ -689,7 +689,7 @@ svg {
   letter-spacing: -0.04em;
 }
 .panel {
-  padding: 21px;
+  padding: 10px;
   background: white;
   border: 1px solid #e8ede9;
   border-radius: var(--radius);
@@ -814,26 +814,37 @@ svg {
   border: 1px dashed var(--line);
   border-radius: 12px;
 }
+/* min-width: 0 everywhere so a long unbroken product name truncates instead of widening the panel. */
 .stock-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 15px;
+  min-width: 0;
 }
 .stock-row {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
+  min-width: 0;
 }
 .stock-head {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 .stock-head strong {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .stock-head span {
+  flex: 0 0 auto;
   color: var(--muted);
+  white-space: nowrap;
 }
 .stock-bar {
   height: 7px;
@@ -849,26 +860,6 @@ svg {
 }
 .stock-bar i.low {
   background: var(--red);
-}
-.filter-row {
-  display: flex;
-  gap: 7px;
-  margin-bottom: 14px;
-  overflow: auto;
-}
-.filter-row button {
-  flex: 0 0 auto;
-  padding: 7px 11px;
-  color: var(--muted);
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  cursor: pointer;
-}
-.filter-row button.active {
-  color: white;
-  background: var(--green-700);
-  border-color: var(--green-700);
 }
 .modal-backdrop {
   position: fixed;
@@ -3749,7 +3740,6 @@ svg {
     min-height: var(--touch-target);
   }
   .button,
-  .filter-row button,
   .admin-tabs button {
     min-width: var(--touch-target);
     min-height: var(--touch-target);
@@ -3796,9 +3786,6 @@ svg {
   }
   .task-meta {
     min-width: 0;
-  }
-  .stock-head {
-    flex-wrap: wrap;
   }
   .table-scroll {
     max-width: 100%;
@@ -3944,7 +3931,7 @@ svg {
     font-size: 20px;
   }
   .staff-task-modal .modal-head h2 {
-    font-size: 24px;
+    font-size: 20px;
   }
   .side-nav button,
   .side-nav a {
@@ -4266,20 +4253,20 @@ svg {
   gap: 6px;
 }
 
-/* Admin user card: avatar, name and an icon-only logout share one row; long names truncate. */
-.admin-shell .user-card {
+/* Sidebar user card (admin + staff): avatar, name and an icon-only logout share one row; long names truncate. */
+.app-shell .user-card {
   flex-wrap: nowrap;
 }
-.admin-shell .user-card > span:nth-child(2) {
+.app-shell .user-card > span:nth-child(2) {
   flex: 1 1 auto;
   min-width: 0;
 }
-.admin-shell .user-card > span:nth-child(2) > * {
+.app-shell .user-card > span:nth-child(2) > * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.admin-shell .user-card .admin-logout {
+.app-shell .user-card .sidebar-logout {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -4294,16 +4281,16 @@ svg {
     background-color 0.15s,
     color 0.15s;
 }
-.admin-shell .user-card .admin-logout:hover,
-.admin-shell .user-card .admin-logout:focus-visible {
+.app-shell .user-card .sidebar-logout:hover,
+.app-shell .user-card .sidebar-logout:focus-visible {
   color: white;
   background: rgba(255, 255, 255, 0.1);
 }
-.admin-shell .user-card .admin-logout:focus-visible {
+.app-shell .user-card .sidebar-logout:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.7);
   outline-offset: 1px;
 }
-.admin-shell .user-card .admin-logout svg {
+.app-shell .user-card .sidebar-logout svg {
   width: 19px;
   height: 19px;
 }
@@ -5502,4 +5489,184 @@ svg {
 .row-actions.icon-actions .icon-action:focus-visible {
   outline: 3px solid var(--green-600);
   outline-offset: 1px;
+}
+/* ---------- Staff workspace (main.app-shell without .admin-shell) ---------- */
+/* Tighter buttons, matching the admin pass; :where keeps the specificity of .button. */
+:where(.app-shell:not(.admin-shell)) .button {
+  gap: 6px;
+  padding: 0 12px;
+}
+/* Task rows: one compact line on desktop — icon, title/location, then status + priority + time inline. */
+.app-shell:not(.admin-shell) .task-list {
+  gap: 8px;
+}
+.app-shell:not(.admin-shell) .task-row {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 10px 12px;
+}
+.app-shell:not(.admin-shell) .task-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+.app-shell:not(.admin-shell) .task-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.app-shell:not(.admin-shell) .task-copy {
+  gap: 2px;
+}
+.app-shell:not(.admin-shell) .task-meta {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.app-shell:not(.admin-shell) .task-meta .badge {
+  padding: 4px 8px;
+  font-size: var(--font-meta);
+  font-weight: 700;
+  line-height: 1.5;
+  text-transform: none;
+  white-space: nowrap;
+}
+.app-shell:not(.admin-shell) .task-meta time {
+  white-space: nowrap;
+}
+/* Stock list: slightly denser rows. */
+.app-shell:not(.admin-shell) .stock-list {
+  gap: 12px;
+}
+/* Task filter: one dropdown on the title row, each option shows how many tasks it holds. */
+.task-filter-header {
+  align-items: center;
+}
+.ui-select-trigger.task-filter-trigger {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 180px;
+  min-height: var(--touch-target);
+  margin-left: auto;
+  padding: 0 12px;
+  color: var(--green-950);
+  font-size: var(--font-control);
+  font-weight: 700;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.ui-select-trigger.task-filter-trigger:hover {
+  border-color: #b9cbc1;
+}
+.ui-select-trigger.task-filter-trigger:focus-visible {
+  outline: 3px solid var(--green-600);
+  outline-offset: 1px;
+}
+.ui-select-trigger.task-filter-trigger > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.task-filter-content .ui-select-item {
+  font-size: var(--font-control);
+  font-weight: 700;
+}
+.task-filter-content .ui-select-item > span:last-child {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.task-filter-count {
+  min-width: 24px;
+  padding: 0 7px;
+  color: var(--muted);
+  font-size: var(--font-meta);
+  font-weight: 800;
+  line-height: 20px;
+  text-align: center;
+  background: #eef3f0;
+  border-radius: 999px;
+}
+.ui-select-item[data-state="checked"] .task-filter-count {
+  color: var(--green-800);
+  background: var(--green-50);
+}
+/* Phones: keep the dropdown on the title row; the open list still shows every count. */
+@media (max-width: 480px) {
+  .ui-select-trigger.task-filter-trigger {
+    min-width: 144px;
+    padding: 0 10px;
+  }
+  .task-filter-trigger .task-filter-count {
+    display: none;
+  }
+}
+/* Very narrow phones: the title row cannot hold both, so the dropdown takes its own full row. */
+@media (max-width: 359px) {
+  .ui-select-trigger.task-filter-trigger {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+}
+/* History: fixed event-label column, coloured by event type. */
+.app-shell:not(.admin-shell) .log-row {
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+}
+/* Staff history shows event labels, not codes: use the body font like a badge. */
+.app-shell:not(.admin-shell) .log-row > code {
+  font-family: inherit;
+  font-size: var(--font-meta);
+  font-weight: 700;
+  line-height: 1.5;
+}
+.app-shell:not(.admin-shell) .log-row > code[data-type="COMPLETED"] {
+  color: #45675a;
+  background: #edf2ef;
+}
+.app-shell:not(.admin-shell) .log-row > code[data-type="STARTED"] {
+  color: #8a6700;
+  background: #fff5bc;
+}
+.app-shell:not(.admin-shell) .log-row > code[data-type="CANCELLED"] {
+  color: var(--muted);
+  background: #f1f3f2;
+}
+.app-shell:not(.admin-shell) .log-row > time {
+  color: #929c97;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .app-shell:not(.admin-shell) .task-row {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 4px 10px;
+    padding: 10px;
+  }
+  .app-shell:not(.admin-shell) .task-meta {
+    grid-column: 2;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .app-shell:not(.admin-shell) .task-meta time {
+    margin-left: auto;
+  }
+  .app-shell:not(.admin-shell) .log-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  /* Task modal: smaller title, "Để sau" + "Bắt đầu" side by side, the main action full width below. */
+  .staff-task-modal .modal-head h2 {
+    font-size: 20px;
+  }
+  .staff-task-modal .modal-actions {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .staff-task-modal .modal-actions .button {
+    padding-inline: 10px;
+  }
+  .staff-task-modal .modal-actions .modal-confirm:nth-child(3) {
+    grid-column: 1 / -1;
+  }
 }

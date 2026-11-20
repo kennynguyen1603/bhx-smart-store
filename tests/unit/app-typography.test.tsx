@@ -84,7 +84,7 @@ describe.each([320, 390, 1280])("application typography at %ipx", width => {
     readable([".side-nav button", ".task-copy strong"]);
     readable([".side-nav .count", ".notification-button span", ".metric small", ".task-meta .badge", ".task-meta time"], 12);
     await click("Nhiệm vụ1");
-    touchable([".filter-row button"]);
+    touchable([".task-filter-trigger"]);
     await act(async () => host.querySelector<HTMLButtonElement>(".task-row")!.click());
     readable([".modal-head p", ".product-summary strong", ".detail-box strong"]);
     readable([".product-summary small", ".detail-box span", ".section-label"], 12);

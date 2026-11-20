@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TASK_STATUS_PRESENTATION } from "@/lib/task-status";
+import { TASK_PRIORITY_LABELS as priorities, TASK_STATUS_PRESENTATION, TASK_TYPE_LABELS as types } from "@/lib/task-status";
 import type { TaskCreateValues } from "./admin-form-schemas";
 import type { ReferenceOption } from "./forms/reference-fields";
 
@@ -15,8 +15,6 @@ export type AdminTask = {
   assignee: ReferenceOption | null; note: string | null;
   createdAt: string; updatedAt: string; completedAt: string | null; dueAt: string | null;
 };
-const types = { RESTOCK: "Bổ sung hàng", FEFO: "FEFO", QUARANTINE: "Cách ly" };
-const priorities = { NORMAL: "Bình thường", MEDIUM: "Trung bình", HIGH: "Cao" };
 function Filter({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: ReferenceOption[] }) {
   const id = useId();
   return <div className="admin-task-filter"><Label htmlFor={id}>{label}</Label><Select value={value} onValueChange={onChange}><SelectTrigger id={id}><SelectValue /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}</SelectContent></Select></div>;

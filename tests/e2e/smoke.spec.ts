@@ -22,6 +22,12 @@ async function selectKioskStore(page: Page, code: string) {
   await expectKioskStore(page, code);
 }
 
+async function chooseStaffTaskFilter(page: Page, label: string) {
+  await page.locator(".task-filter-trigger").click();
+  await page.locator('[role="option"] .task-filter-label').getByText(label, { exact: true }).click();
+  await expect(page.locator('[role="option"]')).toHaveCount(0);
+}
+
 async function authenticateStaffApp(page: Page, email: string) {
   const request = page.context().request;
   const csrfResponse = await request.get("/api/auth/csrf");
@@ -858,7 +864,7 @@ test("Staff history is private while Manager completed tasks show oversight deta
     await page.context().clearCookies();
     await authenticateStaffApp(page, "manager@demo.bhx");
     await page.getByRole("button", { name: "Nhiệm vụ" }).click();
-    await page.getByRole("button", { name: "Hoàn thành" }).click();
+    await chooseStaffTaskFilter(page, "Hoàn thành");
 
     const row = page.locator(".task-row").filter({ hasText: task.title });
     await expect(row).toContainText("Nhân viên Khác");
@@ -1577,12 +1583,12 @@ test("status badge renders all five Vietnamese states alongside priority on mobi
   await page.route("**/api/staff/tasks?**", (route) => route.fulfill({ json: taskInteractionPayload() }));
   await authenticateStaffApp(page, "staff@demo.bhx");
   await page.getByRole("button", { name: "Nhiệm vụ", exact: false }).click();
-  await page.getByRole("button", { name: "Bổ sung", exact: true }).click();
+  await chooseStaffTaskFilter(page, "Bổ sung hàng");
   const rows = page.locator(".task-row");
   await expect(rows).toHaveCount(5);
   for (const [index, label] of ["Mới", "Bị chặn", "Đang làm", "Hoàn thành", "Đã huỷ"].entries()) {
     await expect(rows.nth(index).locator('[data-slot="badge"]')).toHaveText(label);
-    await expect(rows.nth(index).locator(".badge.high")).toHaveText("HIGH");
+    await expect(rows.nth(index).locator(".badge.high")).toHaveText("Cao");
     await expect(rows.nth(index).locator('[data-slot="badge"]')).toBeVisible();
   }
 });
@@ -1615,7 +1621,7 @@ test("two-browser realtime task assignment requires explicit start and delivers 
     await admin.getByRole("button", { name: "Nhiệm vụ", exact: true }).click();
     await authenticateStaffApp(staff, staffUser.email);
     await staff.getByRole("button", { name: /^Nhiệm vụ/ }).click();
-    await staff.getByRole("button", { name: "FEFO", exact: true }).click();
+    await chooseStaffTaskFilter(staff, "FEFO");
     await Promise.all([admin, staff].map(client => client.waitForResponse(response => new URL(response.url()).pathname === "/api/store-changes" && response.ok(), { timeout: 6000 })));
     const navigations: string[] = [], writes: string[] = [];
     for (const client of [admin, staff]) client.on("framenavigated", frame => { if (frame === client.mainFrame()) navigations.push(frame.url()); });
@@ -1741,7 +1747,7 @@ test("realtime task sync reaches Staff then Admin and Manager within six seconds
     await staff.getByRole("button", { name: "Xác nhận đã dán nhãn", exact: true }).click();
     expect((await completedResponse).ok()).toBe(true); const completedAt = Date.now();
     await expect(admin.locator(".admin-task-table tbody tr").filter({ hasText: marker })).toContainText("Hoàn thành", { timeout: 6000 });
-    await manager.getByRole("button", { name: "Hoàn thành", exact: true }).click();
+    await chooseStaffTaskFilter(manager, "Hoàn thành");
     await expect(manager.locator(".task-row").filter({ hasText: marker })).toContainText("Hoàn thành", { timeout: Math.max(1, 6000 - (Date.now() - completedAt)) });
     const oversightDelay = Date.now() - completedAt; expect(oversightDelay).toBeLessThan(6000);
     for (const client of [admin, manager]) {
