@@ -11,6 +11,9 @@ export async function GET(request: Request) {
   const query = normalizeSearch(rawQuery);
   const exact = url.searchParams.get("exact") === "1";
   const category = url.searchParams.get("category");
+  // Optional cap for lightweight callers such as type-ahead suggestions.
+  const limit = Number.parseInt(url.searchParams.get("limit") || "", 10);
+  const take = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : undefined;
   const store = await prisma.store.findUnique({ where: { code: storeCode }, select: { id: true, code: true, name: true, address: true, timeZone: true } });
   if (!store) return Response.json({ error: { code: "STORE_NOT_FOUND", message: "Không tìm thấy cửa hàng" } }, { status: 404 });
   if (exact && !rawQuery) return Response.json({ store, products: [] });
@@ -42,6 +45,7 @@ export async function GET(request: Request) {
       shelf: { include: { zone: true } },
     },
     orderBy: { product: { name: "asc" } },
+    ...(take ? { take } : {}),
   });
   return Response.json({
     store,
